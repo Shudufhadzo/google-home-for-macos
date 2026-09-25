@@ -2,9 +2,17 @@
 
 ## Development package
 
-Run `./Scripts/package-release.sh` using Xcode 26 or newer. It creates a universal (Apple silicon + Intel) app in `dist/HomeSpeaker.app` and a DMG, ZIP, and SHA-256 manifest in `dist/release-<version>/`. These artifacts are ignored by Git. The app includes the license and notices.
+Use Xcode 26 or newer. Install the pinned DMG builder in a virtual environment, then run the packaging script:
 
-Without a signing identity, these are **ad-hoc signed development builds**. macOS may block downloaded copies. Build from source for development; do not disable Gatekeeper or strip quarantine as an installation step.
+```sh
+python3 -m venv /private/tmp/home-speaker-dmg-venv
+/private/tmp/home-speaker-dmg-venv/bin/python -m pip install -r Scripts/dmg-requirements.txt
+DMGBUILD_BIN=/private/tmp/home-speaker-dmg-venv/bin/dmgbuild ./Scripts/package-release.sh
+```
+
+It creates a universal (Apple silicon + Intel) app in `dist/HomeSpeaker.app` and a DMG, ZIP, and SHA-256 manifest in `dist/release-<version>/`. These artifacts are ignored by Git. The app bundle includes the license, notices, and privacy information. The DMG presents the app, drag arrow, and Applications shortcut in a Finder window titled "Drag Home Speaker to Applications". To regenerate the arrow after changing its renderer, run `swift Scripts/render-dmg-arrow.swift Resources/DMGDragArrow.png`.
+
+Without a signing identity, these are **ad-hoc signed development builds** with `-development` in their filenames. macOS may block downloaded copies. Build from source for development; do not disable Gatekeeper or strip quarantine as an installation step.
 
 The 0.4.1 release retains clearly labeled development packages for reference. The README links to the notarized packages for installation. If macOS blocks a development package, use the notarized download or build from source using the README instructions.
 
@@ -15,10 +23,11 @@ The releasing maintainer needs a Developer ID Application certificate with its p
 ```sh
 SIGNING_IDENTITY='Developer ID Application: Your Name (TEAMID)' \
 NOTARY_PROFILE='your-existing-notary-profile' \
+DMGBUILD_BIN=/private/tmp/home-speaker-dmg-venv/bin/dmgbuild \
 ./Scripts/package-release.sh
 ```
 
-The script enables hardened runtime, signs with the Automation entitlement, submits the app to Apple, staples and validates the ticket, and packages the result. It exits if notarization fails. Keep credentials and signing files out of Git.
+The script enables hardened runtime, signs with the Automation entitlement, submits the app to Apple, staples and validates the ticket, and packages the result. Public artifacts use plain names such as `Home-Speaker-0.4.2.dmg` and `Home-Speaker-0.4.2.zip`; signing and notarization are verified release properties, not filename suffixes. It exits if notarization fails. Keep credentials and signing files out of Git.
 
 Before publishing a stable, notarized GitHub release:
 
