@@ -5,6 +5,9 @@ let package = Package(
     name: "HomeSpeaker",
     platforms: [.macOS("14.4")],
     products: [.executable(name: "HomeSpeaker", targets: ["HomeSpeaker"])],
-    targets: [.executableTarget(name: "HomeSpeaker")],
+    targets: [
+        .executableTarget(name: "HomeSpeaker"),
+        .testTarget(name: "HomeSpeakerTests", dependencies: ["HomeSpeaker"])
+    ],
     swiftLanguageVersions: [.v5]
 )

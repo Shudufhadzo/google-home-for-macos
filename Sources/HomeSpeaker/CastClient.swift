@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import Security
+import os
 
 struct CastStatus {
     var volume = 0.5
@@ -10,6 +11,9 @@ struct CastStatus {
     var mediaSessionID: Int?
     var supportsNext = false
     var supportsPrevious = false
+    var contentID: String?
+    var playerState = "IDLE"
+    var receiverAppID: String?
 }
 
 /// The small subset of Cast V2 needed for receiver status and media controls.
@@ -18,6 +22,7 @@ final class CastClient {
     var onStatus: ((CastStatus) -> Void)?
     var onError: ((String) -> Void)?
     var onProgress: ((String) -> Void)?
+    var onDisconnect: (() -> Void)?
 
     private let device: CastDevice
     private let queue = DispatchQueue(label: "HomeSpeaker.CastClient")
@@ -28,6 +33,35 @@ final class CastClient {
     private var status = CastStatus()
     private var requestID = 1
     private var pendingLiveURL: URL?
+    private var requestedLiveURL: URL?
+    private var liveCancelled = false
+    private var nowPlaying = CastNowPlaying.macAudio
+    private var currentItemID: Int?
+    private var metadataRequestID: Int?
+    private var sentMetadata: CastNowPlaying?
+    private let logger = Logger(subsystem: "za.shudu.homespeaker", category: "CastMetadata")
+
+    func updateNowPlaying(_ metadata: CastNowPlaying) {
+        queue.async { [self] in
+            guard metadata != nowPlaying else { return }
+            nowPlaying = metadata
+            updateReceiverMetadata()
+        }
+    }
+
+    private func updateReceiverMetadata() {
+        guard !liveCancelled, let url = requestedLiveURL,
+              status.contentID == url.absoluteString,
+              let transportID, let session = status.mediaSessionID, let itemID = currentItemID,
+              sentMetadata != nowPlaying else { return }
+        let request = nextRequestID()
+        metadataRequestID = request
+        sentMetadata = nowPlaying
+        send(namespace: "urn:x-cast:com.google.cast.media", destination: transportID, body: [
+            "type": "QUEUE_UPDATE", "requestId": request, "mediaSessionId": session,
+            "items": [["itemId": itemID, "autoplay": true, "media": nowPlaying.media(at: url)]]
+        ])
+    }
 
     init(device: CastDevice) {
         self.device = device
@@ -129,26 +163,53 @@ final class CastClient {
     func playMacAudio(at url: URL) {
         queue.async { [self] in
             pendingLiveURL = url
+            requestedLiveURL = url
+            liveCancelled = false
+            currentItemID = nil
+            sentMetadata = nil
             onProgress?("Opening the speaker's Cast player…")
             send(namespace: "urn:x-cast:com.google.cast.receiver", destination: "receiver-0", body: [
                 "type": "LAUNCH", "appId": "CC1AD845", "requestId": nextRequestID()
             ])
             queue.asyncAfter(deadline: .now() + 15) { [weak self] in
-                guard let self, self.pendingLiveURL != nil else { return }
+                guard let self, self.pendingLiveURL == url else { return }
                 self.pendingLiveURL = nil
                 self.onError?("The speaker did not open its Cast player.")
             }
         }
     }
 
+    func cancelMacAudio() {
+        queue.async { [self] in
+            pendingLiveURL = nil
+            liveCancelled = true
+            nowPlaying = .macAudio
+            sentMetadata = nil
+            currentItemID = nil
+            stopCancelledLiveMedia()
+        }
+    }
+
+    private func stopCancelledLiveMedia() {
+        guard liveCancelled, let url = requestedLiveURL,
+              status.contentID == url.absoluteString,
+              let transportID, let session = status.mediaSessionID else { return }
+        requestedLiveURL = nil
+        send(namespace: "urn:x-cast:com.google.cast.media", destination: transportID,
+             body: ["type": "STOP", "mediaSessionId": session, "requestId": nextRequestID()])
+    }
+
     private func disconnectOnQueue() {
+        let wasConnected = connection != nil
         timer?.cancel()
         timer = nil
         connection?.cancel()
         connection = nil
         transportID = nil
         pendingLiveURL = nil
+        requestedLiveURL = nil
         incoming.removeAll()
+        if wasConnected { onDisconnect?() }
     }
 
     private func startTimer() {
@@ -226,6 +287,10 @@ final class CastClient {
 
     private func handle(namespace: String, json: [String: Any]) {
         let type = json["type"] as? String ?? ""
+        if type == "INVALID_REQUEST", let request = json["requestId"] as? Int, request == metadataRequestID {
+            logger.error("Receiver declined metadata update; audio continues")
+            return
+        }
         if ["LAUNCH_ERROR", "LOAD_FAILED", "INVALID_REQUEST"].contains(type) {
             onError?("Speaker rejected Cast request: \(type).")
             pendingLiveURL = nil
@@ -238,6 +303,7 @@ final class CastClient {
                 status.volume = level
             }
             let app = (receiver["applications"] as? [[String: Any]])?.first
+            status.receiverAppID = app?["appId"] as? String
             let nextTransport = app?["transportId"] as? String
             if nextTransport != transportID {
                 transportID = nextTransport
@@ -245,6 +311,8 @@ final class CastClient {
                 status.artist = ""
                 status.isPlaying = false
                 status.mediaSessionID = nil
+                status.contentID = nil
+                status.playerState = "IDLE"
                 status.supportsNext = false
                 status.supportsPrevious = false
                 if let nextTransport {
@@ -258,10 +326,10 @@ final class CastClient {
                app?["appId"] as? String == "CC1AD845" {
                 pendingLiveURL = nil
                 send(namespace: "urn:x-cast:com.google.cast.media", destination: transportID, body: [
-                    "type": "LOAD", "requestId": nextRequestID(), "autoplay": true,
-                    "media": ["contentId": url.absoluteString, "contentType": "audio/wav",
-                              "streamType": "LIVE", "metadata": ["metadataType": 0, "title": "Mac audio"]]
+                    "type": "QUEUE_LOAD", "requestId": nextRequestID(), "startIndex": 0, "repeatMode": "REPEAT_OFF",
+                    "items": [["autoplay": true, "media": nowPlaying.media(at: url)]]
                 ])
+                sentMetadata = nowPlaying
                 onProgress?("Sending Mac audio to the speaker…")
             }
             onStatus?(status)
@@ -270,14 +338,45 @@ final class CastClient {
             if let reason = media?["idleReason"] as? String, reason == "ERROR" {
                 onError?("Speaker could not play the Mac audio stream.")
             }
-            status.mediaSessionID = media?["mediaSessionId"] as? Int
-            status.isPlaying = (media?["playerState"] as? String) == "PLAYING"
-            let metadata = (media?["media"] as? [String: Any])?["metadata"] as? [String: Any]
-            status.title = metadata?["title"] as? String ?? ""
-            status.artist = metadata?["artist"] as? String ?? ""
-            let commands = media?["supportedMediaCommands"] as? Int ?? 0
-            status.supportsNext = commands & 64 != 0
-            status.supportsPrevious = commands & 128 != 0
+            if media == nil {
+                status.mediaSessionID = nil
+                status.contentID = nil
+                status.title = ""
+                status.artist = ""
+                status.playerState = "IDLE"
+                status.supportsNext = false
+                status.supportsPrevious = false
+            } else {
+                let session = media?["mediaSessionId"] as? Int
+                if let session, session != status.mediaSessionID {
+                    status.contentID = nil
+                    status.title = ""
+                    status.artist = ""
+                    status.supportsNext = false
+                    status.supportsPrevious = false
+                }
+                if let session { status.mediaSessionID = session }
+                if let state = media?["playerState"] as? String { status.playerState = state }
+                // Cast may omit unchanged media and command fields in status updates.
+                if let info = media?["media"] as? [String: Any] {
+                    status.contentID = info["contentId"] as? String
+                    let metadata = info["metadata"] as? [String: Any]
+                    status.title = metadata?["title"] as? String ?? ""
+                    status.artist = metadata?["artist"] as? String ?? ""
+                }
+                if let commands = media?["supportedMediaCommands"] as? Int {
+                    status.supportsNext = commands & 64 != 0
+                    status.supportsPrevious = commands & 128 != 0
+                }
+            }
+            if let itemID = media?["currentItemId"] as? Int { currentItemID = itemID }
+            status.isPlaying = status.playerState == "PLAYING"
+            if status.contentID == requestedLiveURL?.absoluteString,
+               status.title == nowPlaying.title, nowPlaying != .macAudio {
+                logger.notice("Receiver reports current song metadata; state=\(self.status.playerState, privacy: .public)")
+            }
+            updateReceiverMetadata()
+            stopCancelledLiveMedia()
             onStatus?(status)
         }
     }

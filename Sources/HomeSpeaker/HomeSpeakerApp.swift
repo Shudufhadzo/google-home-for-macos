@@ -130,25 +130,38 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 12) {
             heading("Now playing", detail: model.selectedDevice?.name ?? "Select a speaker above")
             HStack(spacing: 22) {
-                Image(systemName: model.isPlaying ? "waveform" : "music.note")
-                    .font(.system(size: 34, weight: .light))
-                    .foregroundStyle(.white)
+                Group {
+                    if let data = model.musicTrack?.artwork, let cover = NSImage(data: data) {
+                        Image(nsImage: cover).resizable().scaledToFill()
+                    } else {
+                        Image(systemName: model.isPlaying ? "waveform" : "music.note")
+                            .font(.system(size: 34, weight: .light))
+                            .foregroundStyle(.white)
+                    }
+                }
                     .frame(width: 110, height: 110)
                     .background(LinearGradient(colors: [Palette.blue, Palette.navy], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 18))
+                    .clipShape(RoundedRectangle(cornerRadius: 18))
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 10) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(model.trackTitle.isEmpty ? "Nothing playing" : model.trackTitle)
                             .font(.system(size: 22, weight: .semibold, design: .rounded))
                             .lineLimit(2)
-                        Text(model.isCastingMacAudio ? "Live from this Mac" : (model.trackArtist.isEmpty ? "Start music on your phone or a Cast-enabled app" : model.trackArtist))
+                        Text(model.trackArtist.isEmpty ? "Start music on your phone or a Cast-enabled app" : model.trackArtist)
                             .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                        if let track = model.musicTrack, model.isCastingMacAudio, track.duration > 0 {
+                            ProgressView(value: min(max(track.position, 0), track.duration), total: track.duration)
+                                .accessibilityLabel("Song progress")
+                            Text("\(durationText(track.position)) / \(durationText(track.duration)) · Apple Music")
+                                .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                        }
                     }
                     HStack(spacing: 18) {
                         transport("Previous track", symbol: "backward.end.fill", enabled: model.canSkipPrevious) { model.skipPrevious() }
                         transport(model.isPlaying ? "Pause" : "Play", symbol: model.isPlaying ? "pause.fill" : "play.fill", enabled: model.canControlPlayback, prominent: true) { model.togglePlayback() }
                         transport("Next track", symbol: "forward.end.fill", enabled: model.canSkipNext) { model.skipNext() }
-                        transport("Stop", symbol: "stop.fill", enabled: model.canControlPlayback) { model.stopPlayback() }
+                        transport("Stop", symbol: "stop.fill", enabled: model.canStop) { model.stopPlayback() }
                     }
                 }
                 Spacer(minLength: 0)
@@ -159,7 +172,7 @@ struct ContentView: View {
             HStack(spacing: 14) {
                 Image(systemName: "speaker.fill").foregroundStyle(.secondary)
                 Slider(value: Binding(get: { model.volume }, set: { model.setVolume($0) }), in: 0...1)
-                    .disabled(model.selectedDevice == nil)
+                    .disabled(!model.isConnected)
                     .accessibilityLabel("Speaker volume")
                 Image(systemName: "speaker.wave.3.fill").foregroundStyle(.secondary)
                 Text("\(Int(model.volume * 100))%")
@@ -186,6 +199,11 @@ struct ContentView: View {
     private var audioSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             heading("Mac audio", detail: "Play sound from this Mac on your speaker")
+            Picker("Cast from", selection: $model.castSource) {
+                ForEach(CastAudioSource.allCases) { source in Text(source.rawValue).tag(source) }
+            }
+            .pickerStyle(.segmented)
+            .disabled(model.isCastingMacAudio)
             HStack(spacing: 16) {
                 Image(systemName: "wifi")
                     .font(.title2).foregroundStyle(.white)
@@ -194,8 +212,12 @@ struct ContentView: View {
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Cast Mac audio over Wi-Fi").font(.headline)
-                    Text("Stream Mac sound over Wi-Fi. Protected music may need Bluetooth.")
+                    Text(model.isCastingMacAudio ? model.audioQuality : (model.castSource == .appleMusic ? "Only Music is sent to the speaker. Other Mac sound stays local." : "All Mac audio is sent to the speaker while casting."))
                         .font(.subheadline).foregroundStyle(.secondary)
+                    if model.isCastingMacAudio {
+                        Label(model.audioCaptureStarted ? "Local playback muted · restored when casting stops" : "Waiting for audio recording permission…", systemImage: model.audioCaptureStarted ? "speaker.slash.fill" : "hourglass")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
                 Spacer(minLength: 0)
                 Button(model.isCastingMacAudio ? "Stop casting" : "Cast Mac audio") {
@@ -203,10 +225,17 @@ struct ContentView: View {
                     else { model.startMacAudio() }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(!model.isConnected && !model.isCastingMacAudio)
+                .disabled(model.isRestoringAudio || (!model.isConnected && !model.isCastingMacAudio))
             }
             .padding(16)
             .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 18))
+            if !model.musicMessage.isEmpty {
+                HStack {
+                    Text(model.musicMessage).font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Retry Music info") { model.retryMusicInfo() }
+                }
+            }
             HStack(spacing: 16) {
                 Image(systemName: "laptopcomputer.and.arrow.down")
                     .font(.title2).foregroundStyle(Palette.blue)
@@ -250,5 +279,10 @@ struct ContentView: View {
             Spacer()
             Text(detail).font(.caption).foregroundStyle(.secondary)
         }
+    }
+
+    private func durationText(_ seconds: Double) -> String {
+        let value = seconds.isFinite ? max(0, Int(seconds)) : 0
+        return String(format: "%d:%02d", value / 60, value % 60)
     }
 }
