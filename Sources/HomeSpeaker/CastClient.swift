@@ -14,6 +14,24 @@ struct CastStatus {
     var contentID: String?
     var playerState = "IDLE"
     var receiverAppID: String?
+    var artworkURL: URL?
+
+    mutating func updateMediaInfo(_ info: [String: Any]) {
+        if let nextContentID = info["contentId"] as? String, nextContentID != contentID {
+            contentID = nextContentID
+            title = ""
+            artist = ""
+            artworkURL = nil
+        }
+        guard let metadata = info["metadata"] as? [String: Any] else { return }
+        title = metadata["title"] as? String ?? ""
+        artist = metadata["artist"] as? String ?? ""
+        artworkURL = (metadata["images"] as? [[String: Any]])?.compactMap { image -> URL? in
+            guard let value = image["url"] as? String, let url = URL(string: value),
+                  ["https", "http"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else { return nil }
+            return url
+        }.first
+    }
 }
 
 /// The small subset of Cast V2 needed for receiver status and media controls.
@@ -290,6 +308,7 @@ final class CastClient {
                 transportID = nextTransport
                 status.title = ""
                 status.artist = ""
+                status.artworkURL = nil
                 status.isPlaying = false
                 status.mediaSessionID = nil
                 status.contentID = nil
@@ -323,6 +342,7 @@ final class CastClient {
                 status.contentID = nil
                 status.title = ""
                 status.artist = ""
+                status.artworkURL = nil
                 status.playerState = "IDLE"
                 status.supportsNext = false
                 status.supportsPrevious = false
@@ -332,6 +352,7 @@ final class CastClient {
                     status.contentID = nil
                     status.title = ""
                     status.artist = ""
+                    status.artworkURL = nil
                     status.supportsNext = false
                     status.supportsPrevious = false
                 }
@@ -344,10 +365,7 @@ final class CastClient {
                 }
                 // Cast may omit unchanged media and command fields in status updates.
                 if let info = media?["media"] as? [String: Any] {
-                    status.contentID = info["contentId"] as? String
-                    let metadata = info["metadata"] as? [String: Any]
-                    status.title = metadata?["title"] as? String ?? ""
-                    status.artist = metadata?["artist"] as? String ?? ""
+                    status.updateMediaInfo(info)
                 }
                 if let commands = media?["supportedMediaCommands"] as? Int {
                     status.supportsNext = commands & 64 != 0

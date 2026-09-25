@@ -150,10 +150,14 @@ struct ContentView: View {
                 Group {
                     if let data = model.musicTrack?.artwork, let cover = NSImage(data: data) {
                         Image(nsImage: cover).resizable().scaledToFill()
+                    } else if let url = model.speakerArtworkURL {
+                        AsyncImage(url: url) { phase in
+                            if let image = phase.image { image.resizable().scaledToFill() }
+                            else { artworkPlaceholder(expanded: expanded) }
+                        }
+                        .id(url)
                     } else {
-                        Image(systemName: model.isPlaying ? "waveform" : "music.note")
-                            .font(.system(size: expanded ? 64 : 34, weight: .light))
-                            .foregroundStyle(.white)
+                        artworkPlaceholder(expanded: expanded)
                     }
                 }
                     .frame(width: artworkSize, height: artworkSize)
@@ -213,6 +217,12 @@ struct ContentView: View {
         .disabled(!enabled)
         .accessibilityLabel(title)
         .help(title)
+    }
+
+    private func artworkPlaceholder(expanded: Bool) -> some View {
+        Image(systemName: model.isPlaying ? "waveform" : "music.note")
+            .font(.system(size: expanded ? 64 : 34, weight: .light))
+            .foregroundStyle(.white)
     }
 
     private var audioSection: some View {
