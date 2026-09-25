@@ -12,4 +12,6 @@ jobs:
       - name: Build universal native app
         run: UNIVERSAL=1 ./Scripts/build-app.sh
       - name: Verify both architectures
-        run: lipo dist/HomeSpeaker.app/Contents/MacOS/HomeSpeaker -verify_arch arm64 x86_64
+        run: |
+          architectures="$(lipo -archs dist/HomeSpeaker.app/Contents/MacOS/HomeSpeaker)"
+          [[ "$architectures" == *arm64* && "$architectures" == *x86_64* ]]
