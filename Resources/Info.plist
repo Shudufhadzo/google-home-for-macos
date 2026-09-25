@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key><string>en</string>
+    <key>CFBundleExecutable</key><string>HomeSpeaker</string>
+    <key>CFBundleIdentifier</key><string>za.shudu.homespeaker</string>
+    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+    <key>CFBundleName</key><string>Home Speaker</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>0.1.0</string>
+    <key>CFBundleVersion</key><string>1</string>
+    <key>LSMinimumSystemVersion</key><string>14.4</string>
+    <key>NSHighResolutionCapable</key><true/>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Find and control your Cast-enabled speaker on your local Wi-Fi network.</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Send sound playing on this Mac to your selected speaker over Wi-Fi.</string>
+    <key>NSBonjourServices</key>
+    <array><string>_googlecast._tcp</string></array>
+</dict>
+</plist>
