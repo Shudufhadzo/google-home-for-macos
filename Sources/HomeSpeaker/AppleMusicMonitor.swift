@@ -29,7 +29,7 @@ final class AppleMusicMonitor {
             timer?.cancel()
             permissionDenied = false
             let timer = DispatchSource.makeTimerSource(queue: queue)
-            timer.schedule(deadline: .now(), repeating: 1)
+            timer.schedule(deadline: .now(), repeating: .milliseconds(250), leeway: .milliseconds(25))
             timer.setEventHandler { [weak self] in self?.refresh() }
             self.timer = timer
             timer.resume()
