@@ -4,7 +4,9 @@
 
 Run `./Scripts/package-release.sh` using Xcode 26 or newer. It creates a universal (Apple silicon + Intel) app in `dist/HomeSpeaker.app` and a DMG, ZIP, and SHA-256 manifest in `dist/release-<version>/`. These artifacts are ignored by Git. The app includes the license and notices.
 
-Without a signing identity, these are **ad-hoc signed development builds**, not notarized public downloads. macOS may block downloaded copies. Build from source for development; do not disable Gatekeeper or strip quarantine as an installation step.
+Without a signing identity, these are **ad-hoc signed development builds**. macOS may block downloaded copies. Build from source for development; do not disable Gatekeeper or strip quarantine as an installation step.
+
+The 0.4.1 development packages are published as a clearly labeled GitHub prerelease so testers can download them directly from the README. They are not a substitute for a notarized installer. If macOS blocks the downloaded app, build from source using the README instructions.
 
 ## Notarized public package
 
@@ -18,7 +20,7 @@ NOTARY_PROFILE='your-existing-notary-profile' \
 
 The script enables hardened runtime, signs with the Automation entitlement, submits the app to Apple, staples and validates the ticket, and packages the result. It exits if notarization fails. Keep credentials and signing files out of Git.
 
-Before publishing a GitHub release:
+Before publishing a stable, notarized GitHub release:
 
 - Run tests and CI; verify `lipo -archs` contains `arm64 x86_64`.
 - Validate the app signature and notarization ticket.
