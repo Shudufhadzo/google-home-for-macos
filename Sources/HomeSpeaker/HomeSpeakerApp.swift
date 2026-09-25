@@ -22,17 +22,31 @@ struct ContentView: View {
     @ObservedObject var model: SpeakerModel
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 26) {
-                header
-                speakerSection
-                playerSection
-                audioSection
-                statusLine
+        GeometryReader { geometry in
+            let expanded = geometry.size.width >= 1040
+            ScrollView {
+                VStack(alignment: .leading, spacing: 26) {
+                    header
+                    if expanded {
+                        HStack(alignment: .top, spacing: 28) {
+                            VStack(alignment: .leading, spacing: 26) {
+                                speakerSection
+                                audioSection
+                            }
+                            .frame(width: min(420, (geometry.size.width - 64) * 0.36))
+                            playerSection(expanded: true, height: max(510, geometry.size.height - 192))
+                                .frame(maxWidth: .infinity)
+                        }
+                    } else {
+                        speakerSection
+                        playerSection()
+                        audioSection
+                    }
+                    statusLine
+                }
+                .padding(expanded ? 32 : 24)
+                .frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .topLeading)
             }
-            .padding(30)
-            .frame(maxWidth: 900, alignment: .leading)
-            .frame(maxWidth: .infinity)
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .tint(Palette.blue)
@@ -90,7 +104,7 @@ struct ContentView: View {
                 .padding(18)
                 .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 18))
             } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 185), spacing: 12)], spacing: 12) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 155), spacing: 12)], spacing: 12) {
                     ForEach(model.devices) { device in speakerCard(device) }
                 }
             }
@@ -126,27 +140,31 @@ struct ContentView: View {
         .accessibilityLabel("\(device.name), \(device.model), \(selected ? "selected" : "select speaker")")
     }
 
-    private var playerSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+    private func playerSection(expanded: Bool = false, height: CGFloat = 0) -> some View {
+        let artworkSize = expanded ? min(360, max(200, height * 0.43)) : 110
+        let layout = expanded ? AnyLayout(VStackLayout(alignment: .center, spacing: 24))
+                              : AnyLayout(HStackLayout(alignment: .center, spacing: 22))
+        return VStack(alignment: .leading, spacing: 12) {
             heading("Now playing", detail: model.selectedDevice?.name ?? "Select a speaker above")
-            HStack(spacing: 22) {
+            layout {
                 Group {
                     if let data = model.musicTrack?.artwork, let cover = NSImage(data: data) {
                         Image(nsImage: cover).resizable().scaledToFill()
                     } else {
                         Image(systemName: model.isPlaying ? "waveform" : "music.note")
-                            .font(.system(size: 34, weight: .light))
+                            .font(.system(size: expanded ? 64 : 34, weight: .light))
                             .foregroundStyle(.white)
                     }
                 }
-                    .frame(width: 110, height: 110)
+                    .frame(width: artworkSize, height: artworkSize)
                     .background(LinearGradient(colors: [Palette.blue, Palette.navy], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 18))
                     .clipShape(RoundedRectangle(cornerRadius: 18))
                     .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: expanded ? .center : .leading, spacing: expanded ? 22 : 10) {
+                    VStack(alignment: expanded ? .center : .leading, spacing: 6) {
                         Text(model.trackTitle.isEmpty ? "Nothing playing" : model.trackTitle)
-                            .font(.system(size: 22, weight: .semibold, design: .rounded))
+                            .font(.system(size: expanded ? 28 : 22, weight: .semibold, design: .rounded))
+                            .multilineTextAlignment(expanded ? .center : .leading)
                             .lineLimit(2)
                         Text(model.trackArtist.isEmpty ? "Start music on your phone or a Cast-enabled app" : model.trackArtist)
                             .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
@@ -157,17 +175,18 @@ struct ContentView: View {
                                 .font(.caption).monospacedDigit().foregroundStyle(.secondary)
                         }
                     }
-                    HStack(spacing: 18) {
+                    HStack(spacing: expanded ? 26 : 18) {
                         transport("Previous track", symbol: "backward.end.fill", enabled: model.canSkipPrevious) { model.skipPrevious() }
                         transport(model.isPlaying ? "Pause" : "Play", symbol: model.isPlaying ? "pause.fill" : "play.fill", enabled: model.canControlPlayback, prominent: true) { model.togglePlayback() }
                         transport("Next track", symbol: "forward.end.fill", enabled: model.canSkipNext) { model.skipNext() }
                         transport("Stop", symbol: "stop.fill", enabled: model.canStop) { model.stopPlayback() }
                     }
                 }
-                Spacer(minLength: 0)
+                .frame(maxWidth: expanded ? 480 : .infinity)
+                if !expanded { Spacer(minLength: 0) }
             }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(expanded ? 28 : 20)
+            .frame(maxWidth: .infinity, minHeight: expanded ? height - 64 : nil, alignment: .center)
             .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 20))
             HStack(spacing: 14) {
                 Image(systemName: "speaker.fill").foregroundStyle(.secondary)
@@ -204,30 +223,37 @@ struct ContentView: View {
             }
             .pickerStyle(.segmented)
             .disabled(model.isCastingMacAudio)
-            HStack(spacing: 16) {
-                Image(systemName: "wifi")
-                    .font(.title2).foregroundStyle(.white)
-                    .frame(width: 48, height: 48)
-                    .background(Palette.blue.gradient, in: RoundedRectangle(cornerRadius: 14))
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Cast Mac audio over Wi-Fi").font(.headline)
-                    Text(model.isCastingMacAudio ? model.audioQuality : (model.castSource == .appleMusic ? "Only Music is sent to the speaker. Other Mac sound stays local." : "All Mac audio is sent to the speaker while casting."))
-                        .font(.subheadline).foregroundStyle(.secondary)
-                    if model.isCastingMacAudio {
-                        Label(model.audioCaptureStarted ? "Local playback muted · restored when casting stops" : "Waiting for audio recording permission…", systemImage: model.audioCaptureStarted ? "speaker.slash.fill" : "hourglass")
-                            .font(.caption).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(alignment: .top, spacing: 14) {
+                    Image(systemName: "wifi")
+                        .font(.title2).foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .background(Palette.blue.gradient, in: RoundedRectangle(cornerRadius: 14))
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Cast over Wi-Fi").font(.headline)
+                        Text(model.isCastingMacAudio ? model.audioQuality : (model.castSource == .appleMusic ? "Only Music is sent to the speaker. Other Mac sound stays local." : "All Mac audio is sent to the selected speaker."))
+                            .font(.subheadline).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if model.isCastingMacAudio {
+                            Label(model.audioCaptureStarted ? "Local playback muted" : "Waiting for recording permission…", systemImage: model.audioCaptureStarted ? "speaker.slash.fill" : "hourglass")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                     }
+                    Spacer(minLength: 0)
                 }
-                Spacer(minLength: 0)
-                Button(model.isCastingMacAudio ? "Stop casting" : "Cast Mac audio") {
+                Button {
                     if model.isCastingMacAudio { model.stopMacAudio() }
                     else { model.startMacAudio() }
+                } label: {
+                    Text(model.isCastingMacAudio ? "Stop casting" : "Cast Mac audio")
+                        .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
+                .controlSize(.large)
                 .disabled(model.isRestoringAudio || (!model.isConnected && !model.isCastingMacAudio))
             }
-            .padding(16)
+            .padding(18)
             .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 18))
             if !model.musicMessage.isEmpty {
                 HStack {
@@ -236,29 +262,7 @@ struct ContentView: View {
                     Button("Retry Music info") { model.retryMusicInfo() }
                 }
             }
-            HStack(spacing: 16) {
-                Image(systemName: "laptopcomputer.and.arrow.down")
-                    .font(.title2).foregroundStyle(Palette.blue)
-                    .frame(width: 48, height: 48)
-                    .background(Palette.blue.opacity(0.10), in: RoundedRectangle(cornerRadius: 14))
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Bluetooth audio").font(.headline)
-                    Text("Pair once, then choose the speaker as an output.")
-                        .font(.subheadline).foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 0)
-                Button("Bluetooth settings") { model.openBluetoothSettings() }
-            }
-            .padding(16)
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 18))
-            HStack {
-                Picker("Sound output", selection: Binding(get: { model.selectedAudioOutput }, set: { model.selectAudioOutput($0) })) {
-                    ForEach(model.audioOutputs) { output in Text(output.name).tag(output.id) }
-                }
-                Button { model.refreshAudioOutputs() } label: { Image(systemName: "arrow.clockwise") }
-                    .help("Refresh sound outputs")
-            }
+
         }
     }
 

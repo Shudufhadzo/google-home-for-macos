@@ -10,11 +10,6 @@ struct CastDevice: Identifiable, Equatable {
     let port: UInt16
 }
 
-struct AudioOutput: Identifiable {
-    let id: AudioDeviceID
-    let name: String
-}
-
 @MainActor
 final class SpeakerModel: NSObject, ObservableObject {
     @Published private(set) var devices: [CastDevice] = []
@@ -25,8 +20,6 @@ final class SpeakerModel: NSObject, ObservableObject {
     @Published private(set) var audioCaptureStarted = false
     @Published private(set) var isRestoringAudio = false
     @Published private(set) var volume = 0.5
-    @Published private(set) var audioOutputs: [AudioOutput] = []
-    @Published private(set) var selectedAudioOutput: AudioDeviceID = 0
     @Published private(set) var message = "Ready to scan."
     @Published private(set) var musicMessage = ""
     @Published private(set) var audioQuality = ""
@@ -63,13 +56,14 @@ final class SpeakerModel: NSObject, ObservableObject {
     private var liveURL: URL?
     private var castPlaybackConfirmed = false
     private var publishedTrackID: String?
+    private var appliedMusicPlayback: Bool?
     private var audioStreamID = UUID()
+    private var playbackAttemptID = UUID()
     private var castSampleRate = 48_000
     private let audioRelay = PCMStreamRelay()
 
     func start() {
         scanAgain()
-        refreshAudioOutputs()
     }
 
     func stop() {
@@ -122,6 +116,9 @@ final class SpeakerModel: NSObject, ObservableObject {
                         self.castPlaybackConfirmed = true
                         self.isChangingTrack = false
                         self.message = "Casting \(self.castSource.rawValue) to \(device.name). Local playback is muted."
+                    } else if let liveURL = self.liveURL, status.contentID == liveURL.absoluteString,
+                              status.playerState == "BUFFERING" {
+                        self.message = "Speaker is buffering live audio…"
                     } else if self.castPlaybackConfirmed,
                               status.receiverAppID != "CC1AD845" || status.contentID != self.liveURL?.absoluteString || status.playerState == "IDLE" {
                         self.stopMacAudio()
@@ -206,7 +203,7 @@ final class SpeakerModel: NSObject, ObservableObject {
                 let sampleRate = try await tap.prepare(source: source)
                 guard castingID == id else { tap.stop(); return }
                 castSampleRate = sampleRate
-                audioQuality = "Stereo · \(String(format: "%.1f", Double(sampleRate) / 1000)) kHz · 16-bit PCM"
+                audioQuality = "Stereo · \(String(format: "%.1f", Double(sampleRate) / 1000)) kHz · AAC 256 kbps"
                 try await tap.startCapture { [audioRelay] pcm in audioRelay.append(pcm) }
                 guard castingID == id else { tap.stop(); return }
                 audioCaptureStarted = true
@@ -215,11 +212,15 @@ final class SpeakerModel: NSObject, ObservableObject {
                 monitor.onTrack = { [weak self] track in
                     Task { @MainActor [weak self] in
                         guard let self, self.castingID == id else { return }
-                        guard !self.isChangingTrack else { return }
+                        guard !self.isChangingTrack else {
+                            if track?.id == self.publishedTrackID { self.musicTrack = track }
+                            return
+                        }
                         if let track, track.id != self.publishedTrackID {
                             self.changeMusicTrack(nil, observedTrack: track)
                         } else {
                             self.musicTrack = track
+                            self.synchronizeMusicPlayback()
                         }
                         if track != nil { self.musicMessage = "" }
                     }
@@ -266,12 +267,28 @@ final class SpeakerModel: NSObject, ObservableObject {
         musicMonitor = nil
         musicTrack = nil
         publishedTrackID = nil
+        appliedMusicPlayback = nil
         musicMessage = ""
         audioQuality = ""
         liveURL = nil
         castPlaybackConfirmed = false
         client?.cancelMacAudio()
         message = "Stopping capture…"
+    }
+
+    private func synchronizeMusicPlayback() {
+        guard isCastingMacAudio, castSource == .appleMusic, castPlaybackConfirmed,
+              !isChangingTrack, let track = musicTrack,
+              appliedMusicPlayback != track.isPlaying else { return }
+        let wasPaused = appliedMusicPlayback == false
+        appliedMusicPlayback = track.isPlaying
+        if track.isPlaying, wasPaused {
+            castPlaybackConfirmed = false
+            client?.resumeMacAudio()
+            watchPlaybackStartup()
+        } else { client?.setPlaying(track.isPlaying) }
+        message = track.isPlaying ? "Casting Apple Music. Local playback is muted."
+                                  : "Apple Music and the speaker are paused."
     }
 
     private func changeMusicTrack(_ command: AppleMusicMonitor.Command?, observedTrack: MusicTrack? = nil) {
@@ -308,6 +325,7 @@ final class SpeakerModel: NSObject, ObservableObject {
         audioStreamID = streamID
         castPlaybackConfirmed = false
         publishedTrackID = track?.id
+        appliedMusicPlayback = nil
         let server = LiveAudioServer(sampleRate: castSampleRate)
         audioServer = server
         audioRelay.route { [weak server] in server?.append($0) }
@@ -333,7 +351,6 @@ final class SpeakerModel: NSObject, ObservableObject {
         server.onReceiver = { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, self.isCastingMacAudio, self.audioStreamID == streamID else { return }
-                if resumeMusic, let track { self.musicMonitor?.resumePreparedTrack(track.id) }
                 self.message = "Speaker is buffering the new stream. Local playback is muted."
             }
         }
@@ -345,34 +362,23 @@ final class SpeakerModel: NSObject, ObservableObject {
             }
         }
         try server.start()
+        // Start at the beginning of a fresh segmented timeline, preserving the song intro.
+        if resumeMusic, let track { musicMonitor?.resumePreparedTrack(track.id) }
+        watchPlaybackStartup()
+    }
+
+    private func watchPlaybackStartup() {
+        let attempt = UUID()
+        playbackAttemptID = attempt
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 25_000_000_000)
-            guard let self, self.isCastingMacAudio, self.audioStreamID == streamID, !self.castPlaybackConfirmed else { return }
+            guard let self, self.isCastingMacAudio, self.playbackAttemptID == attempt, !self.castPlaybackConfirmed else { return }
             self.stopMacAudio()
             self.message = "Speaker did not start playback. Check Wi-Fi and try again."
         }
     }
 
-    func refreshAudioOutputs() {
-        audioOutputs = AudioOutputManager.outputs()
-        selectedAudioOutput = AudioOutputManager.defaultOutput()
-    }
 
-    func selectAudioOutput(_ id: AudioDeviceID) {
-        stopMacAudio()
-        if AudioOutputManager.setDefaultOutput(id) {
-            selectedAudioOutput = id
-            message = "Mac sound output changed."
-        } else {
-            message = "Could not change the Mac sound output."
-            refreshAudioOutputs()
-        }
-    }
-
-    func openBluetoothSettings() {
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.BluetoothSettings") else { return }
-        NSWorkspace.shared.open(url)
-    }
 }
 
 extension SpeakerModel: NetServiceBrowserDelegate, NetServiceDelegate {
@@ -433,39 +439,6 @@ extension SpeakerModel: NetServiceBrowserDelegate, NetServiceDelegate {
 }
 
 enum AudioOutputManager {
-    static func outputs() -> [AudioOutput] {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDevices,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var size: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size) == noErr else { return [] }
-        let count = Int(size) / MemoryLayout<AudioDeviceID>.size
-        var ids = [AudioDeviceID](repeating: 0, count: count)
-        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &ids) == noErr else { return [] }
-        return ids.compactMap { id in
-            var streamAddress = AudioObjectPropertyAddress(
-                mSelector: kAudioDevicePropertyStreams,
-                mScope: kAudioObjectPropertyScopeOutput,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            var streamSize: UInt32 = 0
-            guard AudioObjectGetPropertyDataSize(id, &streamAddress, 0, nil, &streamSize) == noErr, streamSize > 0 else { return nil }
-            var nameAddress = AudioObjectPropertyAddress(
-                mSelector: kAudioObjectPropertyName,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            var name: Unmanaged<CFString>?
-            var nameSize = UInt32(MemoryLayout<CFString>.size)
-            guard AudioObjectGetPropertyData(id, &nameAddress, 0, nil, &nameSize, &name) == noErr else { return nil }
-            guard let name else { return nil }
-            return AudioOutput(id: id, name: name.takeUnretainedValue() as String)
-        }
-        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-    }
-
     static func defaultOutput() -> AudioDeviceID {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultOutputDevice,
@@ -478,13 +451,4 @@ enum AudioOutputManager {
         return id
     }
 
-    static func setDefaultOutput(_ id: AudioDeviceID) -> Bool {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var id = id
-        return AudioObjectSetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, UInt32(MemoryLayout<AudioDeviceID>.size), &id) == noErr
-    }
 }

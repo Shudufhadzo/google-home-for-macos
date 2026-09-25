@@ -20,6 +20,6 @@ struct CastNowPlaying: Equatable {
     func media(at url: URL) -> [String: Any] {
         var metadata: [String: Any] = ["metadataType": 3, "title": title, "artist": artist, "albumName": album]
         if let artworkURL { metadata["images"] = [["url": artworkURL.absoluteString]] }
-        return ["contentId": streamURL(at: url).absoluteString, "contentType": "audio/wav", "streamType": "LIVE", "metadata": metadata]
+        return ["contentId": streamURL(at: url).absoluteString, "contentType": "application/x-mpegURL", "hlsSegmentFormat": "fmp4", "streamType": "LIVE", "metadata": metadata]
     }
 }

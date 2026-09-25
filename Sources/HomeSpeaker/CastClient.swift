@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import Security
+import OSLog
 
 struct CastStatus {
     var volume = 0.5
@@ -23,6 +24,7 @@ final class CastClient {
     var onProgress: ((String) -> Void)?
     var onDisconnect: (() -> Void)?
 
+    private let logger = Logger(subsystem: "za.shudu.homespeaker", category: "CastPlayback")
     private let device: CastDevice
     private let queue = DispatchQueue(label: "HomeSpeaker.CastClient")
     private var connection: NWConnection?
@@ -100,10 +102,23 @@ final class CastClient {
 
     func setPlaying(_ playing: Bool) {
         queue.async { [self] in
+            logger.notice("Sending immediate receiver playback command: playing=\(playing)")
             guard let transportID, let mediaSessionID = status.mediaSessionID else { return }
             send(namespace: "urn:x-cast:com.google.cast.media", destination: transportID, body: [
                 "type": playing ? "PLAY" : "PAUSE",
                 "mediaSessionId": mediaSessionID,
+                "requestId": nextRequestID()
+            ])
+        }
+    }
+
+    /// Reload the live media, which works even on receivers that reject SEEK for HLS.
+    func resumeMacAudio() {
+        queue.async { [self] in
+            guard let transportID, let url = requestedLiveURL, !liveCancelled else { return }
+            logger.notice("Reloading receiver at the live edge")
+            send(namespace: "urn:x-cast:com.google.cast.media", destination: transportID, body: [
+                "type": "LOAD", "autoplay": true, "media": nowPlaying.media(at: url),
                 "requestId": nextRequestID()
             ])
         }
@@ -321,7 +336,12 @@ final class CastClient {
                     status.supportsPrevious = false
                 }
                 if let session { status.mediaSessionID = session }
-                if let state = media?["playerState"] as? String { status.playerState = state }
+                if let state = media?["playerState"] as? String {
+                    if status.playerState != state {
+                        logger.notice("Receiver state changed: \(state, privacy: .public)")
+                    }
+                    status.playerState = state
+                }
                 // Cast may omit unchanged media and command fields in status updates.
                 if let info = media?["media"] as? [String: Any] {
                     status.contentID = info["contentId"] as? String
