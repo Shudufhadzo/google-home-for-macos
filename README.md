@@ -8,9 +8,19 @@ A native, local macOS app for a Xiaomi Mi Smart Speaker (L09G) and other Google 
 
 [![macOS build and tests](https://github.com/Shudufhadzo/google-home-for-macos/actions/workflows/ci.yml/badge.svg)](https://github.com/Shudufhadzo/google-home-for-macos/actions/workflows/ci.yml)
 
+## Download Home Speaker for macOS
+
+[**Download Home Speaker 0.4.1 for macOS (DMG)**](https://github.com/Shudufhadzo/google-home-for-macos/releases/download/v0.4.1/Home-Speaker-0.4.1-universal-development.dmg)
+
+Open the DMG and drag **Home Speaker.app** to **Applications**. The download includes Apple silicon and Intel builds and requires macOS 14.4 or newer.
+
+[Download the ZIP instead](https://github.com/Shudufhadzo/google-home-for-macos/releases/download/v0.4.1/Home-Speaker-0.4.1-universal-development.zip) · [SHA-256 checksums](https://github.com/Shudufhadzo/google-home-for-macos/releases/download/v0.4.1/SHA256SUMS.txt) · [Release notes](https://github.com/Shudufhadzo/google-home-for-macos/releases/tag/v0.4.1)
+
+**Development preview:** this build is ad-hoc signed and has not been notarized by Apple, so macOS may block it after download. If that happens, use the build-from-source instructions below. A notarized installer requires Developer ID signing and Apple notarization.
+
 ## Release status
 
-Version **0.4.1** is an early open-source release under the [MIT license](LICENSE). The app runs on macOS **14.4 or newer**. Universal packages target Apple silicon and Intel; physical speaker testing so far has been on Apple silicon with a Xiaomi Mi Smart Speaker L09G.
+Version **0.4.1** is an early open-source development preview under the [MIT license](LICENSE). The app runs on macOS **14.4 or newer**. Universal packages target Apple silicon and Intel; physical speaker testing so far has been on Apple silicon with a Xiaomi Mi Smart Speaker L09G.
 
 Build from source using the steps below. Development DMG/ZIP packages can be generated with `./Scripts/package-release.sh`; they are ad-hoc signed and **not notarized**. A public, notarized installer requires a Developer ID Application certificate. See [release packaging](docs/RELEASING.md), [privacy](PRIVACY.md), and [attribution](NOTICE.md).
 
