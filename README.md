@@ -1,5 +1,7 @@
 # Home Speaker for Mac
 
+![Home Speaker logo](Resources/HomeSpeakerLogo.png)
+
 A native, local macOS app for a Xiaomi Mi Smart Speaker (L09G) and other Google Cast audio devices. It discovers receivers on the same Wi-Fi network, connects to one, shows the current media title, and controls play, pause, stop, supported queue skips, and speaker volume. It can stream captured Mac sound over Wi-Fi or select a paired Bluetooth speaker as the Mac's audio output.
 
 This is an independent prototype. It is not affiliated with Google or Xiaomi.
@@ -14,6 +16,12 @@ open dist/HomeSpeaker.app
 ```
 
 If macOS prompts for Local Network access, allow it. Keep your Mac and speaker on the same Wi-Fi/subnet. If no speaker appears, check **System Settings → Privacy & Security → Local Network**, then rescan. The speaker must already be set up in the Google Home phone app.
+
+## App artwork and installation
+
+The app icon is in `Resources/HomeSpeakerIcon.icns`, with the full-size source in `Resources/HomeSpeakerIconSource.png`. The transparent wordmark is `Resources/HomeSpeakerLogo.png`. The build script embeds both artwork files and sets `CFBundleIconFile` so Finder, Dock, and the app window use the new icon.
+
+To regenerate the icon set after changing the source image, run `./Scripts/generate-app-icon.sh`. To regenerate the matching wordmark, run `swift Scripts/generate-logo.swift`. The currently installed copy is `/Applications/Home Speaker.app`.
 
 ## Cast Mac audio over Wi-Fi
 

@@ -5,6 +5,7 @@
     <key>CFBundleDevelopmentRegion</key><string>en</string>
     <key>CFBundleExecutable</key><string>HomeSpeaker</string>
     <key>CFBundleIdentifier</key><string>za.shudu.homespeaker</string>
+    <key>CFBundleIconFile</key><string>HomeSpeakerIcon</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>Home Speaker</string>
     <key>CFBundlePackageType</key><string>APPL</string>

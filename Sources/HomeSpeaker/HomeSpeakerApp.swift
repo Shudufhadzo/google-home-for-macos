@@ -42,12 +42,21 @@ struct ContentView: View {
 
     private var header: some View {
         HStack(spacing: 16) {
-            Image(systemName: "hifispeaker.fill")
-                .font(.system(size: 25))
-                .foregroundStyle(.white)
-                .frame(width: 56, height: 56)
-                .background(Palette.blue.gradient, in: RoundedRectangle(cornerRadius: 17))
-                .accessibilityHidden(true)
+            if let url = Bundle.main.url(forResource: "HomeSpeakerIconSource", withExtension: "png"),
+               let icon = NSImage(contentsOf: url) {
+                Image(nsImage: icon)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 64, height: 64)
+                    .accessibilityHidden(true)
+            } else {
+                Image(systemName: "hifispeaker.fill")
+                    .font(.system(size: 25))
+                    .foregroundStyle(.white)
+                    .frame(width: 56, height: 56)
+                    .background(Palette.blue.gradient, in: RoundedRectangle(cornerRadius: 17))
+                    .accessibilityHidden(true)
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text("Home Speaker")
                     .font(.system(size: 30, weight: .bold, design: .rounded))
