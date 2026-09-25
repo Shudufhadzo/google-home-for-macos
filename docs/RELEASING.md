@@ -26,4 +26,4 @@ Before publishing a GitHub release:
 - With an actual speaker, test discovery, casting, Next/Previous, phone title/artwork, Stop, and restoration of Mac audio. Distinguish synthetic tests from listening results.
 - Attach the notarized DMG, ZIP, checksums, known limits, and release notes to a versioned GitHub release.
 
-Version 0.3.0 is currently an early development release. Public source availability does not imply Apple notarization or App Store approval.
+Version 0.4.1 is currently an early development release. Public source availability does not imply Apple notarization or App Store approval.

@@ -10,7 +10,7 @@ A native, local macOS app for a Xiaomi Mi Smart Speaker (L09G) and other Google 
 
 ## Release status
 
-Version **0.4.0** is an early open-source release under the [MIT license](LICENSE). The app runs on macOS **14.4 or newer**. Universal packages target Apple silicon and Intel; physical speaker testing so far has been on Apple silicon with a Xiaomi Mi Smart Speaker L09G.
+Version **0.4.1** is an early open-source release under the [MIT license](LICENSE). The app runs on macOS **14.4 or newer**. Universal packages target Apple silicon and Intel; physical speaker testing so far has been on Apple silicon with a Xiaomi Mi Smart Speaker L09G.
 
 Build from source using the steps below. Development DMG/ZIP packages can be generated with `./Scripts/package-release.sh`; they are ad-hoc signed and **not notarized**. A public, notarized installer requires a Developer ID Application certificate. See [release packaging](docs/RELEASING.md), [privacy](PRIVACY.md), and [attribution](NOTICE.md).
 
@@ -55,6 +55,10 @@ The interface adapts to the current window size. Smaller windows use one column;
 
 The selected speaker card is the Cast destination. Home Speaker does not change the Mac's default sound output. If you want Bluetooth instead of Cast, pair and select that output through macOS System Settings → Sound.
 
+## Shared playback from other devices
+
+When your phone or another Cast app starts music, connect Home Speaker to the same speaker to see the receiver's title, artist, and available album cover. The artwork loads from the image URL provided by the active Cast session. If the sender provides no image, or the image cannot be fetched, the app shows its music placeholder. Selecting a speaker joins its current session without taking over playback.
+
 ## Implementation and limits
 
 - Native SwiftUI interface; Bonjour (`_googlecast._tcp`) discovery; a small Cast V2 client over the local network; Core Audio capture; a temporary local HTTP audio stream.
@@ -69,7 +73,7 @@ The selected speaker card is the Cast destination. Home Speaker does not change 
 
 Earlier listening checks on the Xiaomi L09G confirmed audible casting, a silent Mac, and clear sound. The user subsequently measured **12–13 seconds of Play/Pause delay in the WAV build**. Version 0.4.0 replaces that transport and adds direct receiver playback synchronization; the previous listening acceptance does not validate this new transport.
 
-Thirteen automated tests pass locally, including an HTTP HLS test that feeds distinct stereo tones through the native AAC encoder, fetches the resulting fragments, decodes them, verifies non-silent independent channels, and checks that startup and ongoing delivery work even when a paused app supplies no audio callbacks. These tests do not measure acoustic speaker latency. A separate opt-in physical L09G test passed a 20-second pause followed by a live-stream reload and 15 seconds of stable receiver playback. Receiver acknowledgments measured about 0.06 seconds for Pause and 0.93 seconds for Resume; these exclude Apple Music polling and do not measure acoustic output. The user accepted the casting progress before requesting the adaptive layout update.
+Fifteen automated tests pass locally, including artwork metadata lifecycle checks and an HTTP HLS test that feeds distinct stereo tones through the native AAC encoder, fetches the resulting fragments, decodes them, verifies non-silent independent channels, and checks that startup and ongoing delivery work even when a paused app supplies no audio callbacks. These tests do not measure acoustic speaker latency. A separate opt-in physical L09G test passed a 20-second pause followed by a live-stream reload and 15 seconds of stable receiver playback. Receiver acknowledgments measured about 0.06 seconds for Pause and 0.93 seconds for Resume; these exclude Apple Music polling and do not measure acoustic output. The user accepted the casting progress before requesting the adaptive layout update. Version 0.4.1 was also installed and visually checked while joining an existing L09G session started outside the Mac app: its available album cover, title, and artist appeared together.
 
 Run `swift test --disable-sandbox` to check audio conversion and streaming. The HTTP test needs permission to open a loopback network listener. The physical test is skipped by default. To deliberately take over a test receiver with silent generated audio, run `HOME_SPEAKER_TEST_HOST=<receiver-host> swift test --disable-sandbox --filter PhysicalCastTests`.
 

@@ -39,6 +39,7 @@ final class SpeakerModel: NSObject, ObservableObject {
         return receiverStatus.artist
     }
     var isPlaying: Bool { isCastingMacAudio ? (musicTrack?.isPlaying ?? receiverStatus.isPlaying) : receiverStatus.isPlaying }
+    var speakerArtworkURL: URL? { isCastingMacAudio ? nil : receiverStatus.artworkURL }
     var canControlPlayback: Bool { isCastingMacAudio ? musicTrack != nil && !isChangingTrack : isConnected && receiverStatus.mediaSessionID != nil }
     var canSkipNext: Bool { isCastingMacAudio ? musicTrack != nil && !isChangingTrack : isConnected && receiverStatus.supportsNext }
     var canSkipPrevious: Bool { isCastingMacAudio ? musicTrack != nil && !isChangingTrack : isConnected && receiverStatus.supportsPrevious }
