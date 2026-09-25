@@ -6,7 +6,7 @@ Run `./Scripts/package-release.sh` using Xcode 26 or newer. It creates a univers
 
 Without a signing identity, these are **ad-hoc signed development builds**. macOS may block downloaded copies. Build from source for development; do not disable Gatekeeper or strip quarantine as an installation step.
 
-The 0.4.1 development packages are published as a clearly labeled GitHub prerelease so testers can download them directly from the README. They are not a substitute for a notarized installer. If macOS blocks the downloaded app, build from source using the README instructions.
+The 0.4.1 release retains clearly labeled development packages for reference. The README links to the notarized packages for installation. If macOS blocks a development package, use the notarized download or build from source using the README instructions.
 
 ## Notarized public package
 
@@ -28,4 +28,4 @@ Before publishing a stable, notarized GitHub release:
 - With an actual speaker, test discovery, casting, Next/Previous, phone title/artwork, Stop, and restoration of Mac audio. Distinguish synthetic tests from listening results.
 - Attach the notarized DMG, ZIP, checksums, known limits, and release notes to a versioned GitHub release.
 
-Version 0.4.1 is currently an early development release. Public source availability does not imply Apple notarization or App Store approval.
+Version 0.4.1 is an early notarized prerelease. Its signed app passed strict code-signature verification, stapler validation, and Gatekeeper assessment as `Notarized Developer ID`. Notarization is separate from Mac App Store approval.
