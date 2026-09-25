@@ -22,6 +22,7 @@ final class AppleMusicMonitor {
     private var artworkID: String?
     private var artwork: Data?
     private var permissionDenied = false
+    private var preparedTrackID: String?
 
     func start() {
         queue.async { [self] in
@@ -37,6 +38,7 @@ final class AppleMusicMonitor {
 
     func stop() {
         queue.async { [self] in
+            preparedTrackID = nil
             timer?.cancel()
             timer = nil
             artworkID = nil
@@ -58,8 +60,42 @@ final class AppleMusicMonitor {
         }
     }
 
-    private func refresh() {
-        guard !permissionDenied else { return }
+    /// Hold the new song at its beginning until the receiver has opened a fresh stream.
+    func prepareTransition(_ command: Command?, rewind: Bool, completion: @escaping (MusicTrack?) -> Void) {
+        queue.async { [self] in
+            guard timer != nil, !permissionDenied else { completion(nil); return }
+            let action = command?.rawValue ?? ""
+            let position = rewind ? "set player position to 0" : ""
+            guard execute("""
+                with timeout of 5 seconds
+                    tell application id "com.apple.Music"
+                        pause
+                        \(action)
+                        pause
+                        \(position)
+                    end tell
+                end timeout
+                """) != nil else { completion(nil); return }
+            let track = refresh(notify: false)
+            preparedTrackID = track?.id
+            completion(track)
+        }
+    }
+
+    func resumePreparedTrack(_ id: String) {
+        queue.async { [self] in
+            guard timer != nil, preparedTrackID == id else { return }
+            preparedTrackID = nil
+            // Recheck identity: an external skip must not resume a different track.
+            guard refresh(notify: false)?.id == id else { return }
+            _ = execute("tell application id \"com.apple.Music\" to play")
+            refresh()
+        }
+    }
+
+    @discardableResult
+    private func refresh(notify: Bool = true) -> MusicTrack? {
+        guard !permissionDenied else { return nil }
         guard let result = execute("""
             if application id "com.apple.Music" is not running then return {}
             with timeout of 3 seconds
@@ -69,12 +105,12 @@ final class AppleMusicMonitor {
                     return {persistent ID of currentSongTrack, name of currentSongTrack, artist of currentSongTrack, album of currentSongTrack, duration of currentSongTrack, player position, player state is playing}
                 end tell
             end timeout
-            """) else { onTrack?(nil); return }
+            """) else { if notify { onTrack?(nil) }; return nil }
         guard result.numberOfItems == 7 else {
             artworkID = nil
             artwork = nil
-            onTrack?(nil)
-            return
+            if notify { onTrack?(nil) }
+            return nil
         }
         let id = result.atIndex(1)?.stringValue ?? ""
         if id != artworkID {
@@ -94,11 +130,13 @@ final class AppleMusicMonitor {
                 """, reportError: false)
             if let data = cover?.data, data.count < 8_000_000, NSImage(data: data) != nil { artwork = data }
         }
-        onTrack?(MusicTrack(id: id, title: result.atIndex(2)?.stringValue ?? "",
+        let track = MusicTrack(id: id, title: result.atIndex(2)?.stringValue ?? "",
                            artist: result.atIndex(3)?.stringValue ?? "", album: result.atIndex(4)?.stringValue ?? "",
                            duration: result.atIndex(5)?.doubleValue ?? 0,
                            position: result.atIndex(6)?.doubleValue ?? 0,
-                           isPlaying: result.atIndex(7)?.booleanValue ?? false, artwork: artwork))
+                           isPlaying: result.atIndex(7)?.booleanValue ?? false, artwork: artwork)
+        if notify { onTrack?(track) }
+        return track
     }
 
     private func execute(_ source: String, reportError: Bool = true) -> NSAppleEventDescriptor? {

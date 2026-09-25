@@ -36,7 +36,9 @@ final class LiveAudioServerTests: XCTestCase {
         let reader = StreamReader(expectedCount: 44 + pcm.count) { audioReceived.fulfill() }
         let session = URLSession(configuration: .ephemeral, delegate: reader, delegateQueue: nil)
         defer { session.invalidateAndCancel() }
-        session.dataTask(with: url).resume()
+        var streamComponents = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+        streamComponents.queryItems = [URLQueryItem(name: "track", value: "second-song")]
+        session.dataTask(with: streamComponents.url!).resume()
         wait(for: [audioReceived], timeout: 5)
         XCTAssertEqual(reader.responseStatus, 200)
         XCTAssertEqual(String(data: reader.bytes.prefix(4), encoding: .utf8), "RIFF")

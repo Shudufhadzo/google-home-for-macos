@@ -21,6 +21,7 @@ final class SpeakerModel: NSObject, ObservableObject {
     @Published private(set) var selectedDevice: CastDevice?
     @Published private(set) var isConnected = false
     @Published private(set) var isCastingMacAudio = false
+    @Published private(set) var isChangingTrack = false
     @Published private(set) var audioCaptureStarted = false
     @Published private(set) var isRestoringAudio = false
     @Published private(set) var volume = 0.5
@@ -45,9 +46,9 @@ final class SpeakerModel: NSObject, ObservableObject {
         return receiverStatus.artist
     }
     var isPlaying: Bool { isCastingMacAudio ? (musicTrack?.isPlaying ?? receiverStatus.isPlaying) : receiverStatus.isPlaying }
-    var canControlPlayback: Bool { isCastingMacAudio ? musicTrack != nil : isConnected && receiverStatus.mediaSessionID != nil }
-    var canSkipNext: Bool { isCastingMacAudio ? musicTrack != nil : isConnected && receiverStatus.supportsNext }
-    var canSkipPrevious: Bool { isCastingMacAudio ? musicTrack != nil : isConnected && receiverStatus.supportsPrevious }
+    var canControlPlayback: Bool { isCastingMacAudio ? musicTrack != nil && !isChangingTrack : isConnected && receiverStatus.mediaSessionID != nil }
+    var canSkipNext: Bool { isCastingMacAudio ? musicTrack != nil && !isChangingTrack : isConnected && receiverStatus.supportsNext }
+    var canSkipPrevious: Bool { isCastingMacAudio ? musicTrack != nil && !isChangingTrack : isConnected && receiverStatus.supportsPrevious }
     var canStop: Bool { isCastingMacAudio || canControlPlayback }
 
     private var browser: NetServiceBrowser?
@@ -62,6 +63,9 @@ final class SpeakerModel: NSObject, ObservableObject {
     private var liveURL: URL?
     private var castPlaybackConfirmed = false
     private var publishedTrackID: String?
+    private var audioStreamID = UUID()
+    private var castSampleRate = 48_000
+    private let audioRelay = PCMStreamRelay()
 
     func start() {
         scanAgain()
@@ -114,8 +118,9 @@ final class SpeakerModel: NSObject, ObservableObject {
                 self.isConnected = true
                 self.receiverStatus = status
                 if self.isCastingMacAudio {
-                    if status.contentID == self.liveURL?.absoluteString, status.playerState == "PLAYING" {
+                    if let liveURL = self.liveURL, status.contentID == liveURL.absoluteString, status.playerState == "PLAYING" {
                         self.castPlaybackConfirmed = true
+                        self.isChangingTrack = false
                         self.message = "Casting \(self.castSource.rawValue) to \(device.name). Local playback is muted."
                     } else if self.castPlaybackConfirmed,
                               status.receiverAppID != "CC1AD845" || status.contentID != self.liveURL?.absoluteString || status.playerState == "IDLE" {
@@ -164,12 +169,12 @@ final class SpeakerModel: NSObject, ObservableObject {
     }
 
     func skipPrevious() {
-        if isCastingMacAudio { musicMonitor?.command(.previous) }
+        if isCastingMacAudio { changeMusicTrack(.previous) }
         else { client?.skip(next: false) }
     }
 
     func skipNext() {
-        if isCastingMacAudio { musicMonitor?.command(.next) }
+        if isCastingMacAudio { changeMusicTrack(.next) }
         else { client?.skip(next: true) }
     }
 
@@ -182,7 +187,7 @@ final class SpeakerModel: NSObject, ObservableObject {
 
     func startMacAudio() {
         guard !isCastingMacAudio, !isRestoringAudio else { return }
-        guard isConnected, let client else {
+        guard isConnected, client != nil else {
             message = "Connect to a speaker before sending Mac audio."
             return
         }
@@ -196,44 +201,26 @@ final class SpeakerModel: NSObject, ObservableObject {
         let tap = SystemAudioTap()
         audioTap = tap
         message = "Preparing audio. Allow System Audio Recording if macOS asks…"
-        Task { @MainActor [self, client] in
+        Task { @MainActor [self] in
             do {
                 let sampleRate = try await tap.prepare(source: source)
                 guard castingID == id else { tap.stop(); return }
-                let server = LiveAudioServer(sampleRate: sampleRate)
-                audioServer = server
+                castSampleRate = sampleRate
                 audioQuality = "Stereo · \(String(format: "%.1f", Double(sampleRate) / 1000)) kHz · 16-bit PCM"
-                server.onReady = { [weak self, weak client] url in
-                    Task { @MainActor [weak self] in
-                        guard let self, self.castingID == id else { return }
-                        self.liveURL = url
-                        self.message = "Starting \(self.castSource.rawValue) on the speaker…"
-                        client?.playMacAudio(at: url)
-                    }
-                }
-                server.onReceiver = { [weak self] in
-                    Task { @MainActor [weak self] in
-                        guard let self, self.castingID == id else { return }
-                        self.message = "Speaker is buffering audio. Local playback is muted."
-                    }
-                }
-                server.onError = { [weak self] error in
-                    Task { @MainActor [weak self] in
-                        guard let self, self.castingID == id else { return }
-                        self.stopMacAudio()
-                        self.message = error
-                    }
-                }
-                try await tap.startCapture { [weak server] pcm in server?.append(pcm) }
-                guard castingID == id else { tap.stop(); server.stop(); return }
+                try await tap.startCapture { [audioRelay] pcm in audioRelay.append(pcm) }
+                guard castingID == id else { tap.stop(); return }
                 audioCaptureStarted = true
-                try server.start()
+                try openAudioStream(track: nil, resumeMusic: false)
                 let monitor = AppleMusicMonitor()
                 monitor.onTrack = { [weak self] track in
                     Task { @MainActor [weak self] in
                         guard let self, self.castingID == id else { return }
-                        self.musicTrack = track
-                        self.publishMusicMetadata()
+                        guard !self.isChangingTrack else { return }
+                        if let track, track.id != self.publishedTrackID {
+                            self.changeMusicTrack(nil, observedTrack: track)
+                        } else {
+                            self.musicTrack = track
+                        }
                         if track != nil { self.musicMessage = "" }
                     }
                 }
@@ -246,12 +233,6 @@ final class SpeakerModel: NSObject, ObservableObject {
                 musicMonitor = monitor
                 monitor.start()
                 message = "Waiting for the speaker. Local playback is muted."
-                Task { @MainActor [weak self] in
-                    try? await Task.sleep(nanoseconds: 25_000_000_000)
-                    guard let self, self.castingID == id, !self.castPlaybackConfirmed else { return }
-                    self.stopMacAudio()
-                    self.message = "Speaker did not start playback. Mac sound was restored. Check Wi-Fi and try again."
-                }
             } catch {
                 guard castingID == id else { return }
                 stopMacAudio()
@@ -263,6 +244,9 @@ final class SpeakerModel: NSObject, ObservableObject {
     func stopMacAudio() {
         guard isCastingMacAudio else { return }
         castingID = nil
+        audioStreamID = UUID()
+        isChangingTrack = false
+        audioRelay.route(to: nil)
         isCastingMacAudio = false
         audioCaptureStarted = false
         isRestoringAudio = true
@@ -290,24 +274,83 @@ final class SpeakerModel: NSObject, ObservableObject {
         message = "Stopping capture…"
     }
 
-    private func publishMusicMetadata() {
-        guard let liveURL, let server = audioServer else { return }
-        guard let track = musicTrack else {
-            if publishedTrackID != nil { client?.updateNowPlaying(.macAudio); publishedTrackID = nil; server.setArtwork(nil) }
-            return
+    private func changeMusicTrack(_ command: AppleMusicMonitor.Command?, observedTrack: MusicTrack? = nil) {
+        guard isCastingMacAudio, !isChangingTrack, let monitor = musicMonitor else { return }
+        let resumeMusic = command != nil || (observedTrack ?? musicTrack)?.isPlaying == true
+        let rewind = command != nil || publishedTrackID != nil
+        isChangingTrack = true
+        castPlaybackConfirmed = false
+        audioStreamID = UUID()
+        let transition = audioStreamID
+        liveURL = nil
+        audioRelay.route(to: nil)
+        audioServer?.stop()
+        audioServer = nil
+        client?.cancelMacAudio()
+        message = "Changing song. Clearing the speaker's buffered audio…"
+        monitor.prepareTransition(command, rewind: rewind) { [weak self] track in
+            Task { @MainActor [weak self] in
+                guard let self, self.isCastingMacAudio, self.audioStreamID == transition else { return }
+                guard let track else {
+                    self.stopMacAudio()
+                    self.message = "Could not prepare the next song. Start playback in Music and cast again."
+                    return
+                }
+                self.musicTrack = track
+                do { try self.openAudioStream(track: track, resumeMusic: resumeMusic) }
+                catch { self.stopMacAudio(); self.message = error.localizedDescription }
+            }
         }
-        guard track.id != publishedTrackID else { return }
-        publishedTrackID = track.id
-        var artworkURL: URL?
-        if let data = track.artwork, let bitmap = NSBitmapImageRep(data: data),
-           let jpeg = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.85]) {
-            server.setArtwork(jpeg)
-            var components = URLComponents(url: liveURL.appendingPathExtension("jpg"), resolvingAgainstBaseURL: false)
-            components?.queryItems = [URLQueryItem(name: "track", value: track.id)]
-            artworkURL = components?.url
-        } else { server.setArtwork(nil) }
-        client?.updateNowPlaying(CastNowPlaying(id: track.id, title: track.title, artist: track.artist,
-                                               album: track.album, artworkURL: artworkURL))
+    }
+
+    private func openAudioStream(track: MusicTrack?, resumeMusic: Bool) throws {
+        let streamID = UUID()
+        audioStreamID = streamID
+        castPlaybackConfirmed = false
+        publishedTrackID = track?.id
+        let server = LiveAudioServer(sampleRate: castSampleRate)
+        audioServer = server
+        audioRelay.route { [weak server] in server?.append($0) }
+        server.onReady = { [weak self, weak server] url in
+            Task { @MainActor [weak self] in
+                guard let self, let server, self.isCastingMacAudio, self.audioStreamID == streamID else { return }
+                var metadata = CastNowPlaying.macAudio
+                if let track {
+                    var artworkURL: URL?
+                    if let data = track.artwork, let bitmap = NSBitmapImageRep(data: data),
+                       let jpeg = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.85]) {
+                        server.setArtwork(jpeg)
+                        artworkURL = url.appendingPathExtension("jpg")
+                    }
+                    metadata = CastNowPlaying(id: track.id, title: track.title, artist: track.artist,
+                                              album: track.album, artworkURL: artworkURL)
+                }
+                self.liveURL = metadata.streamURL(at: url)
+                self.client?.playMacAudio(at: url, metadata: metadata)
+                self.message = resumeMusic ? "Preparing the speaker for the new song…" : "Starting Mac audio…"
+            }
+        }
+        server.onReceiver = { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.isCastingMacAudio, self.audioStreamID == streamID else { return }
+                if resumeMusic, let track { self.musicMonitor?.resumePreparedTrack(track.id) }
+                self.message = "Speaker is buffering the new stream. Local playback is muted."
+            }
+        }
+        server.onError = { [weak self] error in
+            Task { @MainActor [weak self] in
+                guard let self, self.isCastingMacAudio, self.audioStreamID == streamID else { return }
+                self.stopMacAudio()
+                self.message = error
+            }
+        }
+        try server.start()
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 25_000_000_000)
+            guard let self, self.isCastingMacAudio, self.audioStreamID == streamID, !self.castPlaybackConfirmed else { return }
+            self.stopMacAudio()
+            self.message = "Speaker did not start playback. Check Wi-Fi and try again."
+        }
     }
 
     func refreshAudioOutputs() {

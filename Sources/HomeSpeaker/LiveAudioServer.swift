@@ -121,8 +121,8 @@ final class LiveAudioServer {
                 connection.send(content: Data(headers.utf8) + artwork, completion: .contentProcessed { _ in connection.cancel() })
                 return
             }
-            let get = text.hasPrefix("GET /\(self.token).wav ")
-            let head = text.hasPrefix("HEAD /\(self.token).wav ")
+            let get = text.hasPrefix("GET ") && path == "/\(self.token).wav"
+            let head = text.hasPrefix("HEAD ") && path == "/\(self.token).wav"
             guard get || head else {
                 self.replyAndClose("404 Not Found", on: connection)
                 return
