@@ -25,4 +25,6 @@ label_pos = "bottom"
 arrange_by = None
 show_icon_preview = True
 icon_locations = {"Home Speaker.app": (145, 195), "Drag →.png": (340, 195), "Applications": (535, 195)}
-hide_extensions = ["Home Speaker.app", "Drag →.png"]
+# SetFile's extension-hidden flag writes FinderInfo into the app bundle root,
+# which invalidates a stapled Developer ID signature. Finder hides .app by default.
+hide_extensions = ["Drag →.png"]
