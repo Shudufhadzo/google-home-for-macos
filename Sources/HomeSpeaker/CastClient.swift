@@ -130,18 +130,6 @@ final class CastClient {
         }
     }
 
-    /// Reload the live media, which works even on receivers that reject SEEK for HLS.
-    func resumeMacAudio() {
-        queue.async { [self] in
-            guard let transportID, let url = requestedLiveURL, !liveCancelled else { return }
-            logger.notice("Reloading receiver at the live edge")
-            send(namespace: "urn:x-cast:com.google.cast.media", destination: transportID, body: [
-                "type": "LOAD", "autoplay": true, "media": nowPlaying.media(at: url),
-                "requestId": nextRequestID()
-            ])
-        }
-    }
-
     func stopPlayback() {
         queue.async { [self] in
             guard let transportID, let mediaSessionID = status.mediaSessionID else { return }

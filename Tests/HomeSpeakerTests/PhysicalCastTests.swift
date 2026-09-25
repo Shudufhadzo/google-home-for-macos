@@ -3,7 +3,7 @@ import XCTest
 
 /// Opt-in, silent hardware test. Takes over the explicitly selected receiver.
 final class PhysicalCastTests: XCTestCase {
-    func testLongPauseAndLiveReload() throws {
+    func testLongPauseAndDirectPlay() throws {
         guard let host = ProcessInfo.processInfo.environment["HOME_SPEAKER_TEST_HOST"], !host.isEmpty else {
             throw XCTSkip("Set HOME_SPEAKER_TEST_HOST to opt into taking over a physical Cast receiver.")
         }
@@ -40,8 +40,8 @@ final class PhysicalCastTests: XCTestCase {
         DispatchQueue.global().asyncAfter(deadline: .now() + 20) { held.fulfill() }
         wait(for: [held], timeout: 21)
         print("PHYSICAL RESUME \(Date())")
-        client.resumeMacAudio()
-        wait(for: [resumed], timeout: 10)
+        client.setPlaying(true)
+        wait(for: [resumed], timeout: 3)
         let stable = expectation(description: "Verify stable playback after resume")
         DispatchQueue.global().asyncAfter(deadline: .now() + 15) { stable.fulfill() }
         wait(for: [stable], timeout: 16)

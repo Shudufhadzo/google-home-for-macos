@@ -281,13 +281,11 @@ final class SpeakerModel: NSObject, ObservableObject {
         guard isCastingMacAudio, castSource == .appleMusic, castPlaybackConfirmed,
               !isChangingTrack, let track = musicTrack,
               appliedMusicPlayback != track.isPlaying else { return }
-        let wasPaused = appliedMusicPlayback == false
         appliedMusicPlayback = track.isPlaying
-        if track.isPlaying, wasPaused {
-            castPlaybackConfirmed = false
-            client?.resumeMacAudio()
-            watchPlaybackStartup()
-        } else { client?.setPlaying(track.isPlaying) }
+        // The HLS timeline keeps advancing with silence while Music is paused.
+        // Resume the existing session instead of loading a new player and waiting
+        // for its startup buffer again.
+        client?.setPlaying(track.isPlaying)
         message = track.isPlaying ? "Casting Apple Music. Local playback is muted."
                                   : "Apple Music and the speaker are paused."
     }
