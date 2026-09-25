@@ -10,17 +10,17 @@ A native, local macOS app for a Xiaomi Mi Smart Speaker (L09G) and other Google 
 
 ## Download Home Speaker for macOS
 
-[**Download Home Speaker 0.4.1 for macOS (notarized DMG)**](https://github.com/Shudufhadzo/google-home-for-macos/releases/download/v0.4.1/Home-Speaker-0.4.1-universal-notarized.dmg)
+[**Download Home Speaker 0.4.2 for macOS (.dmg)**](https://github.com/Shudufhadzo/google-home-for-macos/releases/download/v0.4.2/Home-Speaker-0.4.2.dmg)
 
 Open the DMG and drag **Home Speaker.app** to **Applications**. The download includes Apple silicon and Intel builds and requires macOS 14.4 or newer.
 
-[Download the notarized ZIP instead](https://github.com/Shudufhadzo/google-home-for-macos/releases/download/v0.4.1/Home-Speaker-0.4.1-universal-notarized.zip) · [SHA-256 checksums](https://github.com/Shudufhadzo/google-home-for-macos/releases/download/v0.4.1/SHA256SUMS-notarized.txt) · [Release notes](https://github.com/Shudufhadzo/google-home-for-macos/releases/tag/v0.4.1)
+[Download the ZIP instead](https://github.com/Shudufhadzo/google-home-for-macos/releases/download/v0.4.2/Home-Speaker-0.4.2.zip) · [SHA-256 checksums](https://github.com/Shudufhadzo/google-home-for-macos/releases/download/v0.4.2/SHA256SUMS.txt) · [Release notes](https://github.com/Shudufhadzo/google-home-for-macos/releases/tag/v0.4.2)
 
-This download is signed with a Developer ID Application certificate and notarized by Apple. The older release assets labeled `development` remain available for reference; use the `notarized` download for installation.
+This download is signed with a Developer ID Application certificate and notarized by Apple. The DMG opens a Finder window that shows where to drag the app for installation.
 
 ## Release status
 
-Version **0.4.1** is an early open-source prerelease under the [MIT license](LICENSE). The app runs on macOS **14.4 or newer**. Universal packages target Apple silicon and Intel; physical speaker testing so far has been on Apple silicon with a Xiaomi Mi Smart Speaker L09G.
+Version **0.4.2** is an early open-source prerelease under the [MIT license](LICENSE). The app runs on macOS **14.4 or newer**. Universal packages target Apple silicon and Intel; physical speaker testing so far has been on Apple silicon with a Xiaomi Mi Smart Speaker L09G.
 
 Build from source using the steps below. `./Scripts/package-release.sh` creates notarized public packages when configured with a Developer ID Application identity and `notarytool` profile; without them, it creates development packages. See [release packaging](docs/RELEASING.md), [privacy](PRIVACY.md), and [attribution](NOTICE.md).
 
@@ -75,7 +75,7 @@ When your phone or another Cast app starts music, connect Home Speaker to the sa
 - Google's Home API samples target iOS and Android. This native macOS app does not manage Google Home account devices or routines. Google's web controls and phone app remain separate, and initial speaker setup still needs the phone app.
 - The Cast V2 connection accepts the receiver's self-signed local certificate. It should be used only on a trusted local network.
 - Capture preserves stereo 16-bit PCM at the device sample rate, then Apple's AVAssetWriter encodes AAC at 256 kbps and produces half-second fragmented MP4 segments. No third-party encoder is bundled. Audio segments and playlists remain in memory and are removed when casting stops.
-- The live playlist advertises six recent segments (about three seconds), retaining twenty for in-flight requests. Encoding uses a one-second bounded PCM queue and stops on overload. Pausing an Apple Music cast pauses the receiver directly. HLS keeps advancing with silence when the capture tap supplies no samples, and Resume reloads at the live edge instead of replaying the paused backlog. All Mac audio remains a continuous mix, independent of Music's playback state.
+- The live playlist advertises six recent segments (about three seconds), retaining twenty for in-flight requests. Encoding uses a one-second bounded PCM queue and stops on overload. Pausing an Apple Music cast pauses the receiver directly. HLS keeps advancing with silence when the capture tap supplies no samples, so Resume uses a direct Play command on the existing receiver session. All Mac audio remains a continuous mix, independent of Music's playback state.
 - Regression tests cover stereo channel separation, buffered capture, overload reporting, real HTTP HLS delivery, native AAC decoding, silent startup, continuous live delivery, bounded playlist history, separate artwork, song identity, and cancellation. The app supports one receiver at a time and does not synchronize groups.
 - Device listening checks are separate from digital audio tests. A Cast session reporting Playing does not by itself prove audible quality or local speaker muting.
 
