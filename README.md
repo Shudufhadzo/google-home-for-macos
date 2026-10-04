@@ -8,11 +8,12 @@ This is an independent project, not an official Google Home application. Compati
 
 [![macOS build and tests](https://github.com/Shudufhadzo/google-home-for-macos/actions/workflows/ci.yml/badge.svg)](https://github.com/Shudufhadzo/google-home-for-macos/actions/workflows/ci.yml)
 
-## Current development: Home Manager 0.5.2
+## Current development: Home Manager 0.5.3
 
 The whole-home expansion is **unreleased source and a local development build**. It includes:
 
 - **Your home, Favourites, and Rooms:** searchable entries with persistent local room/favourite assignments.
+- **Device display names:** open a device’s Details, enter a **Display name**, and Save. Custom names appear on inventory cards, in search, and in Cast destination controls. They stay on this Mac; the advertised device name and macOS AirPlay picker keep their original names. Clear the field or choose **Use device name** to reset it.
 - **Unified discovery:** advertisements from the same TV or router are reconciled into one card, retaining AirPlay, UPnP, management links, and saved room/favourite aliases. Distinct Google Home groups and hub entities remain separate.
 - **Cast + AirPlay:** include an AirPlay TV using the native route picker inside Home Manager. One captured HLS stream feeds Cast and the AirPlay player; a preparation barrier waits for both outputs. Reported timeline alignment and a manual TV offset help with independent buffering, but do not guarantee acoustic synchronisation.
 - **Music & speakers:** select up to eight individual Cast receivers together, or one Google Home group. One capture and AAC stream feed every destination, with a coordinated start, individual/master volume, reported timeline monitoring, and capability-gated drift correction.
@@ -20,7 +21,7 @@ The whole-home expansion is **unreleased source and a local development build**.
 - **Home Assistant:** authenticated REST connection, live state/service reads, 10-second polling, and capability-aware controls. Tokens use macOS Keychain. A failed refresh retains last-known state and disables commands until connectivity returns.
 - **Connections:** setup and configuration links for Google Home, Home Assistant, Huawei, Xiaomi, and Matter. Links open in Safari.
 
-See [multi-device playback and TV compatibility](docs/MULTI-DEVICE-CASTING.md), [device support and setup](docs/DEVICE-SUPPORT.md), [architecture and extension guide](docs/HOME-ARCHITECTURE.md), and [0.5.1 local verification](docs/VERIFICATION-0.5.1.md). The [0.5.0 verification](docs/VERIFICATION-0.5.0.md) and [whole-home development notes](docs/RELEASE-NOTES-0.5.0.md) record the earlier baseline.
+See [multi-device playback and TV compatibility](docs/MULTI-DEVICE-CASTING.md), [device support and setup](docs/DEVICE-SUPPORT.md), [architecture and extension guide](docs/HOME-ARCHITECTURE.md), and [display-name verification](docs/VERIFICATION-0.5.3.md). The [0.5.1 playback verification](docs/VERIFICATION-0.5.1.md), [0.5.0 verification](docs/VERIFICATION-0.5.0.md) and [whole-home development notes](docs/RELEASE-NOTES-0.5.0.md) record earlier baselines.
 
 ## Published speaker-only download (0.4.2)
 

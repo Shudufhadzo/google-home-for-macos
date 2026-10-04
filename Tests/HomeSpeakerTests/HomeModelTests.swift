@@ -60,6 +60,72 @@ private actor ModelFixtureHub: HomeAssistantConnecting {
 
 final class HomeModelTests: XCTestCase {
     @MainActor
+    func testDisplayNameSurvivesDiscoveryAliasesRefreshAndReloadWithoutChangingIdentity() throws {
+        let store = MemoryHomeSettings(), vault = MemoryHomeCredentials()
+        let airPlay = HomeDevice(id: "airplay:tv", name: "Samsung TV", kind: .television, source: .bonjour,
+                                 host: "192.168.0.5", state: "Discovered", controlNote: "", capabilities: [.airPlay])
+        let upnp = HomeDevice(id: "ssdp:uuid:tv", name: "Samsung TV", kind: .television, source: .ssdp,
+                              host: "192.168.0.5", state: "Discovered", controlNote: "")
+        let home = HomeModel(persistence: store, credentials: vault)
+        home.acceptNetworkDevices([airPlay, upnp])
+        let tv = try XCTUnwrap(home.devices(cast: []).first)
+        home.saveAnnotation(tv.id, room: "Lounge", favorite: true, displayName: "  Living room TV  ")
+        XCTAssertEqual(home.displayName(for: tv), "Living room TV")
+        XCTAssertEqual(tv.name, "Samsung TV")
+        XCTAssertEqual(tv.host, "192.168.0.5")
+        home.acceptNetworkDevices([upnp])
+        home.toggleFavorite(upnp.id)
+        home.saveAnnotation(upnp.id, room: "Living room", favorite: false)
+
+        let reloaded = HomeModel(persistence: store, credentials: vault)
+        reloaded.acceptNetworkDevices([airPlay, upnp])
+        let observed = try XCTUnwrap(reloaded.devices(cast: []).first)
+        XCTAssertEqual(observed.id, tv.id)
+        XCTAssertEqual(observed.name, "Samsung TV")
+        XCTAssertEqual(reloaded.displayName(for: observed), "Living room TV")
+        XCTAssertEqual(reloaded.annotation(observed.id).room, "Living room")
+        XCTAssertFalse(reloaded.annotation(observed.id).isFavorite)
+
+        reloaded.saveAnnotation(observed.id, room: "Living room", favorite: false, displayName: " \n ")
+        let reset = HomeModel(persistence: store, credentials: vault)
+        reset.acceptNetworkDevices([upnp, airPlay])
+        XCTAssertEqual(reset.displayName(for: observed), "Samsung TV")
+        XCTAssertNil(reset.annotation(upnp.id).displayName, "Reset must clear every alias so an old name cannot return")
+    }
+
+    @MainActor
+    func testCastDisplayNamesStayLocalAndSortByDisplayedName() throws {
+        let home = HomeModel(persistence: MemoryHomeSettings(), credentials: MemoryHomeCredentials())
+        let office = CastDevice(id: "office", name: "Office Speaker", model: "Mi Smart Speaker", host: "192.168.0.2", port: 8009)
+        let group = CastDevice(id: "Google-Cast-Group-house", name: "Home Speakers", model: "Google Cast Group", host: "192.168.0.2", port: 32000)
+        _ = home.devices(cast: [office, group])
+        home.saveAnnotation("cast:office", room: "", favorite: false, displayName: "Bedroom")
+        XCTAssertEqual(home.displayName(for: office), "Bedroom")
+        XCTAssertEqual(home.displayName(for: group), "Home Speakers")
+        XCTAssertEqual(home.devices(cast: [group, office]).map(\.id), ["cast:office", "cast:Google-Cast-Group-house"])
+        XCTAssertEqual(office.name, "Office Speaker")
+        XCTAssertEqual(office.host, "192.168.0.2")
+        XCTAssertEqual(office.port, 8009)
+    }
+
+    @MainActor
+    func testLegacySettingsDecodeAndSavedDeviceNameLengthIsBounded() throws {
+        let legacy = Data("{\"version\":1,\"devices\":[],\"annotations\":{\"cast:office\":{\"room\":\"Office\",\"isFavorite\":true}}}".utf8)
+        let store = MemoryHomeSettings(), vault = MemoryHomeCredentials()
+        store.settings = try JSONDecoder().decode(HomeSettings.self, from: legacy)
+        XCTAssertNil(store.settings.annotations["cast:office"]?.displayName)
+        let home = HomeModel(persistence: store, credentials: vault)
+        try home.addDevice(name: "EX511", kind: .router, address: "http://192.168.0.1", room: "Office")
+        let device = try XCTUnwrap(home.devices(cast: []).first)
+        home.saveAnnotation(device.id, room: "Office", favorite: true, displayName: String(repeating: "a", count: 140))
+        let reloaded = HomeModel(persistence: store, credentials: vault)
+        XCTAssertEqual(reloaded.displayName(for: device).count, 128)
+        XCTAssertEqual(reloaded.settings.devices.first?.name, "EX511")
+        XCTAssertEqual(reloaded.settings.devices.first?.url.absoluteString, "http://192.168.0.1")
+        XCTAssertEqual(reloaded.annotation("cast:office"), .init(room: "Office", isFavorite: true))
+    }
+
+    @MainActor
     func testRoomAndFavoriteOnOldTVServiceSurviveReconciliationExpiryAndReload() throws {
         let store = MemoryHomeSettings(), vault = MemoryHomeCredentials()
         let oldID = "bonjour:Samsung TV|_airplay._tcp.|local."
@@ -178,10 +244,11 @@ final class HomeModelTests: XCTestCase {
         defer { home.stop() }
         _ = await home.connect(address: "http://127.0.0.1:8123", token: "fixture-one")
         let original = try XCTUnwrap(home.devices(cast: []).first)
-        home.saveAnnotation(original.id, room: "Study", favorite: true)
+        home.saveAnnotation(original.id, room: "Study", favorite: true, displayName: "Desk plug")
         _ = await home.connect(address: "http://127.0.0.1:8123", token: "fixture-two")
         let new = try XCTUnwrap(home.devices(cast: []).first)
-        XCTAssertEqual(home.annotation(new.id), .init(room: "Study", isFavorite: true))
+        XCTAssertEqual(home.annotation(new.id), .init(room: "Study", isFavorite: true, displayName: "Desk plug"))
+        XCTAssertEqual(home.displayName(for: new), "Desk plug")
         XCTAssertEqual(vault.tokens.count, 1)
     }
 }

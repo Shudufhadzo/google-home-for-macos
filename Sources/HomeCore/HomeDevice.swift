@@ -122,8 +122,9 @@ public struct HomeDevice: Identifiable, Equatable, Sendable {
 public struct DeviceAnnotation: Codable, Equatable, Sendable {
     public var room: String
     public var isFavorite: Bool
-    public init(room: String = "", isFavorite: Bool = false) {
-        self.room = room; self.isFavorite = isFavorite
+    public var displayName: String?
+    public init(room: String = "", isFavorite: Bool = false, displayName: String? = nil) {
+        self.room = room; self.isFavorite = isFavorite; self.displayName = displayName
     }
 }
 

@@ -93,18 +93,20 @@ struct HomeDeviceSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var room: String
     @State private var favorite: Bool
+    @State private var displayName: String
 
     init(home: HomeModel, device: HomeDevice) {
         self.home = home; self.device = device
         let annotation = home.annotation(device.id)
         // Editing owns a snapshot until Save is pressed.
         _room = State(initialValue: annotation.room); _favorite = State(initialValue: annotation.isFavorite)
+        _displayName = State(initialValue: annotation.displayName ?? "")
     }
 
     var body: some View {
         let entity = home.entity(for: device)
         VStack(alignment: .leading, spacing: 20) {
-            Label(device.name, systemImage: device.kind.symbol).font(.title2.weight(.semibold))
+            Label(home.displayName(for: device), systemImage: device.kind.symbol).font(.title2.weight(.semibold))
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     LabeledContent("Type", value: device.kind.title)
@@ -122,10 +124,17 @@ struct HomeDeviceSheet: View {
                     }
                     Divider()
                     Form {
+                        TextField("Display name", text: $displayName, prompt: Text(device.name))
+                        LabeledContent("Device name", value: device.name).textSelection(.enabled)
                         TextField("Room", text: $room, prompt: Text("Assign a room"))
                         Toggle("Favourite", isOn: $favorite)
                     }
-                    Text("Room and favourite assignments are saved on this Mac.").font(.caption).foregroundStyle(.secondary)
+                    HStack {
+                        Text("Names, rooms, and favourites are saved on this Mac. Leave the display name blank to use the device name.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Use device name") { displayName = "" }.disabled(displayName.isEmpty)
+                    }
                 }
             }.frame(maxHeight: 450)
             HStack {
@@ -134,7 +143,7 @@ struct HomeDeviceSheet: View {
                 }
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Save") { home.saveAnnotation(device.id, room: room, favorite: favorite); dismiss() }
+                Button("Save") { home.saveAnnotation(device.id, room: room, favorite: favorite, displayName: displayName); dismiss() }
                     .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
             }
         }.padding(28).frame(width: 570)

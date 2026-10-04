@@ -102,7 +102,7 @@ struct HomeDashboardView: View {
             case .network: matchesDestination = device.source != .homeAssistant && device.source != .cast
             default: matchesDestination = true
             }
-            let text = [device.name, device.model, device.kind.title, device.connectionSummary, device.host ?? "", annotation.room].joined(separator: " ")
+            let text = [home.displayName(for: device), device.name, device.model, device.kind.title, device.connectionSummary, device.host ?? "", annotation.room].joined(separator: " ")
             return matchesDestination && (search.isEmpty || text.localizedCaseInsensitiveContains(search))
         }
         return ScrollView {
@@ -288,6 +288,7 @@ private struct HomeDeviceCard: View {
     let inspect: () -> Void
     let favorite: () -> Void
     let command: (HomeCommand) -> Void
+    private var displayName: String { annotation.displayName ?? device.name }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -296,15 +297,15 @@ private struct HomeDeviceCard: View {
                     HStack(spacing: 12) {
                         Image(systemName: device.kind.symbol).font(.title2).foregroundStyle(.tint).frame(width: 28)
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(device.name).font(.headline).lineLimit(2)
+                            Text(displayName).font(.headline).lineLimit(2)
                             Text(annotation.room.isEmpty ? device.kind.title : annotation.room).font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer(minLength: 0)
                     }.contentShape(Rectangle())
-                }.buttonStyle(.plain).accessibilityLabel("Open \(device.name)")
+                }.buttonStyle(.plain).accessibilityLabel("Open \(displayName)")
                 Button(action: favorite) { Image(systemName: annotation.isFavorite ? "star.fill" : "star") }
                     .buttonStyle(.plain).foregroundStyle(annotation.isFavorite ? Color.accentColor : .secondary)
-                    .accessibilityLabel(annotation.isFavorite ? "Remove \(device.name) from favourites" : "Add \(device.name) to favourites")
+                    .accessibilityLabel(annotation.isFavorite ? "Remove \(displayName) from favourites" : "Add \(displayName) to favourites")
                     .help(annotation.isFavorite ? "Remove favourite" : "Add favourite")
             }
             HStack {
@@ -333,5 +334,6 @@ private struct HomeDeviceCard: View {
         .padding(18).frame(maxWidth: .infinity, minHeight: 175, alignment: .topLeading)
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.secondary.opacity(0.12)))
+        .contextMenu { Button("Rename device…", action: inspect) }
     }
 }

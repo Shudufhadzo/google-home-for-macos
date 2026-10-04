@@ -3,14 +3,14 @@ import SwiftUI
 
 struct AirPlayDestinationSection: View {
     @ObservedObject var model: SpeakerModel
-    let devices: [HomeDevice]
+    let deviceNames: [String]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Toggle("Also play on an AirPlay TV", isOn: $model.includeAirPlay)
                 .disabled(model.isCastingMacAudio || model.isRestoringAudio)
             if model.includeAirPlay {
-                AirPlayOutputControls(model: model, output: model.airPlay, devices: devices)
+                AirPlayOutputControls(model: model, output: model.airPlay, deviceNames: deviceNames)
             } else {
                 Text("Add an AirPlay TV alongside your Cast speakers or Google Home group.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -24,7 +24,7 @@ struct AirPlayDestinationSection: View {
 private struct AirPlayOutputControls: View {
     @ObservedObject var model: SpeakerModel
     @ObservedObject var output: AirPlayAudioPlayer
-    let devices: [HomeDevice]
+    let deviceNames: [String]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -37,8 +37,8 @@ private struct AirPlayOutputControls: View {
                 Spacer()
                 AirPlayRoutePicker(player: output).frame(width: 44, height: 34)
             }
-            if !devices.isEmpty {
-                Text("Discovered: \(devices.map(\.name).joined(separator: ", "))")
+            if !deviceNames.isEmpty {
+                Text("Discovered: \(deviceNames.joined(separator: ", "))")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Text(model.isCastingMacAudio ? output.message : "Select your Cast speakers, start casting, then choose the TV here. In Music, choose this Mac as the output so Home Manager can capture it.")

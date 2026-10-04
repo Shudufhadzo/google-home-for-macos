@@ -53,8 +53,12 @@ final class HomeModel {
         let ids = [id] + (deviceAliases[id] ?? []).subtracting([id]).sorted()
         let annotations = ids.compactMap { settings.annotations[$0] }
         return DeviceAnnotation(room: annotations.first(where: { !$0.room.isEmpty })?.room ?? "",
-                                isFavorite: annotations.contains(where: \.isFavorite))
+                                isFavorite: annotations.contains(where: \.isFavorite),
+                                displayName: annotations.compactMap(\.displayName).first(where: { !$0.isEmpty }))
     }
+
+    func displayName(for device: HomeDevice) -> String { annotation(device.id).displayName ?? device.name }
+    func displayName(for device: CastDevice) -> String { annotation("cast:\(device.id)").displayName ?? device.name }
 
     /// Retain annotation aliases across service expiry and rescan, using protocol IDs only.
     func acceptNetworkDevices(_ devices: [HomeDevice]) {
@@ -106,7 +110,7 @@ final class HomeModel {
         return result.sorted {
             let lhs = annotation($0.id).isFavorite, rhs = annotation($1.id).isFavorite
             if lhs != rhs { return lhs }
-            return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+            return displayName(for: $0).localizedStandardCompare(displayName(for: $1)) == .orderedAscending
         }
     }
 
@@ -243,8 +247,13 @@ final class HomeModel {
         }
     }
 
-    func saveAnnotation(_ id: String, room: String, favorite: Bool) {
-        let annotation = DeviceAnnotation(room: String(room.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80)), isFavorite: favorite)
+    func saveAnnotation(_ id: String, room: String, favorite: Bool, displayName: String? = nil) {
+        let enteredName = displayName.map { String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(128)) }
+        let savedName: String?
+        if let enteredName { savedName = enteredName.isEmpty ? nil : enteredName }
+        else { savedName = annotation(id).displayName }
+        let annotation = DeviceAnnotation(room: String(room.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80)),
+                                          isFavorite: favorite, displayName: savedName)
         for alias in deviceAliases[id] ?? [id] { settings.annotations[alias] = annotation }
         persist()
     }

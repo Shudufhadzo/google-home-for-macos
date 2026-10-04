@@ -27,6 +27,11 @@ struct ContentView: View {
     @ObservedObject var model: SpeakerModel
     var home: HomeModel
 
+    private var displayDestinationNames: String {
+        (model.selectedDevices.map { home.displayName(for: $0) } +
+         (model.includeAirPlay ? [model.airPlay.routeName ?? "AirPlay TV"] : [])).joined(separator: ", ")
+    }
+
     var body: some View {
         GeometryReader { geometry in
             let expanded = geometry.size.width >= 1040
@@ -118,7 +123,7 @@ struct ContentView: View {
             if !model.selectedDevices.isEmpty { destinationControls }
             Button("Google Home group setup") { home.open(URL(string: "https://support.google.com/googlehome/answer/7174267?hl=en")!) }
                 .font(.caption)
-            AirPlayDestinationSection(model: model, devices: home.networkDevices.filter { $0.capabilities.contains(.airPlay) })
+            AirPlayDestinationSection(model: model, deviceNames: home.networkDevices.filter { $0.capabilities.contains(.airPlay) }.map { home.displayName(for: $0) })
         }
     }
 
@@ -137,7 +142,7 @@ struct ContentView: View {
                     }
                 }
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(device.name).font(.headline).lineLimit(1)
+                    Text(home.displayName(for: device)).font(.headline).lineLimit(1)
                     Text(device.model.isEmpty ? "Google Cast" : device.model)
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
@@ -149,7 +154,7 @@ struct ContentView: View {
         }
         .buttonStyle(.plain)
         .disabled(model.isCastingMacAudio || model.isRestoringAudio)
-        .accessibilityLabel("\(device.name), \(device.model), \(selected ? "selected, remove destination" : "add destination")")
+        .accessibilityLabel("\(home.displayName(for: device)), \(device.model), \(selected ? "selected, remove destination" : "add destination")")
     }
 
     private var destinationControls: some View {
@@ -157,17 +162,17 @@ struct ContentView: View {
             ForEach(model.selectedDevices) { device in
                 VStack(alignment: .leading, spacing: 5) {
                     HStack {
-                        Text(device.name).font(.subheadline.weight(.semibold))
+                        Text(home.displayName(for: device)).font(.subheadline.weight(.semibold))
                         Spacer()
                         Button { model.removeDestination(device) } label: { Image(systemName: "xmark.circle") }
                             .buttonStyle(.plain).disabled(model.isCastingMacAudio || model.isRestoringAudio)
-                            .accessibilityLabel("Remove \(device.name)")
+                            .accessibilityLabel("Remove \(home.displayName(for: device))")
                     }
                     Text(model.destinationState(device))
                         .font(.caption).foregroundStyle(.secondary)
                     Slider(value: Binding(get: { model.receiverStatuses[device.id]?.volume ?? 0.5 }, set: { model.setVolume($0, for: device) }), in: 0...1)
                         .disabled(!model.connectedDeviceIDs.contains(device.id))
-                        .accessibilityLabel("\(device.name) volume")
+                        .accessibilityLabel("\(home.displayName(for: device)) volume")
                 }
             }
             if !model.syncMessage.isEmpty {
@@ -198,7 +203,7 @@ struct ContentView: View {
                     HStack(alignment: .top, spacing: 12) {
                         Image(systemName: "tv").foregroundStyle(.secondary)
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(device.name).font(.subheadline.weight(.semibold))
+                            Text(home.displayName(for: device)).font(.subheadline.weight(.semibold))
                             Text("UPnP media device · Cast or AirPlay playback not advertised")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
@@ -217,7 +222,7 @@ struct ContentView: View {
         let layout = expanded ? AnyLayout(VStackLayout(alignment: .center, spacing: 24))
                               : AnyLayout(HStackLayout(alignment: .center, spacing: 22))
         return VStack(alignment: .leading, spacing: 12) {
-            heading("Now playing", detail: model.destinationNames.isEmpty ? "Select destinations" : model.destinationNames)
+            heading("Now playing", detail: displayDestinationNames.isEmpty ? "Select destinations" : displayDestinationNames)
             layout {
                 Group {
                     if let data = model.musicTrack?.artwork, let cover = NSImage(data: data) {
