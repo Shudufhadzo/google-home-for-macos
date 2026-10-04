@@ -7,6 +7,8 @@ Use Xcode 26 or newer (macOS 26 SDK) to build. The deployment target is macOS 14
 3. Run `./Scripts/build-app.sh` and check the native app.
 4. Explain the user-visible change and the checks you performed in your pull request.
 
+Home Manager adds a shared `HomeCore` library and a macOS home dashboard. Read [the architecture guide](docs/HOME-ARCHITECTURE.md) and [device support](docs/DEVICE-SUPPORT.md) before adding an adapter. Validate exact entity/service formats and model/firmware capabilities. Keep tokens in Keychain, use explicit entity targets, and distinguish discovery, synthetic fixtures, authenticated hub behavior, and physical-device acceptance. `python3 Scripts/mock-home-hub.py` provides a clearly marked loopback development fixture. The current build output is `dist/HomeManager.app`.
+
 For casting changes, report the speaker model, macOS version, audio source, observed delay, and whether the check was an automated sample test or a physical listening test. Verify that Stop restores local playback and that skips do not play buffered samples from the previous track. Do not attach personal audio recordings, credentials, network addresses, or an entire private music library to issues.
 
 Contributions are accepted under the MIT license. Keep changes small and include a regression for reproducible audio or protocol defects.

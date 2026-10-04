@@ -9,12 +9,16 @@ private enum Palette {
 @main
 struct HomeSpeakerApp: App {
     @StateObject private var model = SpeakerModel()
+    @State private var home = HomeModel()
 
     var body: some Scene {
-        WindowGroup("Home Speaker") {
-            ContentView(model: model)
-                .frame(minWidth: 680, minHeight: 640)
+        Window("Home Manager", id: "home") {
+            HomeDashboardView(home: home, speaker: model)
+                .frame(minWidth: 820, minHeight: 640)
+                .onAppear { model.start(); home.start() }
+                .onDisappear { model.stop(); home.stop() }
         }
+        .defaultSize(width: 1180, height: 780)
     }
 }
 
@@ -50,8 +54,6 @@ struct ContentView: View {
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .tint(Palette.blue)
-        .onAppear { model.start() }
-        .onDisappear { model.stop() }
     }
 
     private var header: some View {
@@ -72,9 +74,9 @@ struct ContentView: View {
                     .accessibilityHidden(true)
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text("Home Speaker")
+                Text("Music & speakers")
                     .font(.system(size: 30, weight: .bold, design: .rounded))
-                Text("Music and sound around your home")
+                Text("Cast playback and sound from this Mac")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
