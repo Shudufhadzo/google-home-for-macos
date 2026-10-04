@@ -1,6 +1,7 @@
 # Attribution and names
 
 Home Manager, expanded from Home Speaker, is an independent open-source application by Shudufhadzo Nemulalate.
+Created by **Shudufhadzo Nemulalate**. Contact: [him@shudufhadzo.com](mailto:him@shudufhadzo.com). Portfolio: [shudufhadzo.com](https://shudufhadzo.com).
 It is not made, endorsed, certified, or supported by Google, Apple, Xiaomi, Huawei, or the Home Assistant/Open Home Foundation projects.
 “Google Home for macOS” describes the repository's compatibility goal; it is not an official Google product name.
 Google Home, Google Cast, Apple Music, macOS, Xiaomi, Huawei, Home Assistant, Matter, and other referenced names belong to their respective owners. The MIT license does not grant rights to those trademarks.

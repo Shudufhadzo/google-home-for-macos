@@ -32,6 +32,7 @@ struct HomeDashboardView: View {
     @State private var destination: HomeDestination? = .overview
     @State private var search = ""
     @State private var sheet: HomeSheet?
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         NavigationSplitView {
@@ -56,8 +57,8 @@ struct HomeDashboardView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Label(home.bridgeConnected ? "Home hub connected" : "Local discovery", systemImage: home.bridgeConnected ? "checkmark.circle" : "network")
                         .font(.caption)
-                    Text("Home Speaker is now part of your whole home.")
-                        .font(.caption2).foregroundStyle(.secondary)
+                    Button("About Home Manager") { openWindow(id: "about") }
+                        .buttonStyle(.link).font(.caption2)
                 }
                 .padding(16).frame(maxWidth: .infinity, alignment: .leading)
             }

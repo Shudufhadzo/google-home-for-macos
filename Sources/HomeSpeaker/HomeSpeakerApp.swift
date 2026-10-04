@@ -20,6 +20,12 @@ struct HomeSpeakerApp: App {
                 .onDisappear { model.stop(); home.stop() }
         }
         .defaultSize(width: 1180, height: 780)
+        .commands { HomeManagerCommands() }
+
+        Window("About Home Manager", id: "about") {
+            AboutHomeManagerView()
+        }
+        .windowResizability(.contentSize)
     }
 }
 
