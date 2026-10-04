@@ -8,17 +8,17 @@ This is an independent project, not an official Google Home application. Compati
 
 [![macOS build and tests](https://github.com/Shudufhadzo/google-home-for-macos/actions/workflows/ci.yml/badge.svg)](https://github.com/Shudufhadzo/google-home-for-macos/actions/workflows/ci.yml)
 
-## Current development: Home Manager 0.5.0
+## Current development: Home Manager 0.5.1
 
 The whole-home expansion is **unreleased source and a local development build**. It includes:
 
 - **Your home, Favourites, and Rooms:** searchable entries with persistent local room/favourite assignments.
-- **Music & speakers:** the existing direct Cast discovery and playback/audio features.
+- **Music & speakers:** select up to eight individual Cast receivers together, or one Google Home group. One capture and AAC stream feed every destination, with a coordinated start, individual/master volume, reported timeline monitoring, and capability-gated drift correction.
 - **Network:** Bonjour and IPv4 SSDP discovery, the gateway reported by macOS, and saved management addresses for routers, extenders, and other devices. Saved addresses are labelled as saved; discovery is not treated as proof of device control.
 - **Home Assistant:** authenticated REST connection, live state/service reads, 10-second polling, and capability-aware controls. Tokens use macOS Keychain. A failed refresh retains last-known state and disables commands until connectivity returns.
 - **Connections:** setup and configuration links for Google Home, Home Assistant, Huawei, Xiaomi, and Matter. Links open in Safari.
 
-See [device support and setup](docs/DEVICE-SUPPORT.md), [architecture and extension guide](docs/HOME-ARCHITECTURE.md), [local verification](docs/VERIFICATION-0.5.0.md), and [development release notes](docs/RELEASE-NOTES-0.5.0.md).
+See [multi-device playback and TV compatibility](docs/MULTI-DEVICE-CASTING.md), [device support and setup](docs/DEVICE-SUPPORT.md), [architecture and extension guide](docs/HOME-ARCHITECTURE.md), and [0.5.1 local verification](docs/VERIFICATION-0.5.1.md). The [0.5.0 verification](docs/VERIFICATION-0.5.0.md) and [whole-home development notes](docs/RELEASE-NOTES-0.5.0.md) record the earlier baseline.
 
 ## Published speaker-only download (0.4.2)
 
@@ -75,11 +75,11 @@ To regenerate the icon set after changing the source image, run `./Scripts/gener
 
 ## Cast Mac audio over Wi-Fi
 
-1. Select the speaker card and wait for **Connected**.
-2. Choose **Apple Music** to cast only Music, or **All Mac audio** for the entire sound mix. Choose **Cast Mac audio**. Allow macOS System Audio Recording access if prompted. The app uses Apple's Core Audio tap to capture the Mac sound mix, serves an unlisted live AAC/HLS stream from the Mac, and asks the speaker's Cast receiver to play it. Both devices must remain on the same local network.
+1. In **Music & speakers → Destinations**, select the individual Cast speakers/TVs you want and wait for every destination to show **Connected**. Alternatively, select a Google Home group: the group handles its members' synchronisation. Group selection replaces individual selections to avoid conflicting sessions. Stop casting before changing destinations.
+2. Choose **Apple Music** to cast only Music, or **All Mac audio** for the entire sound mix. Choose **Cast Mac audio**. Allow macOS System Audio Recording access if prompted. The app uses Apple's Core Audio tap to capture the Mac sound mix, serves one unlisted live AAC/HLS stream from the Mac, and asks each selected Cast receiver to play the same timeline. All devices must remain on the same local network. For individual receivers, the app prepares them with autoplay disabled, waits for all of them, and starts playback together at normal speed.
 3. Local playback of the selected source is automatically muted using Core Audio's `mutedWhenTapped` mode. Other applications remain audible when you select Apple Music. The Mac's system volume setting is not changed.
 4. When asked, allow the app's **Music** Automation access for song information and playback controls. Playback state and metadata refresh every 250 ms; artwork refreshes when the track changes. The current song is also published as music metadata to the Cast receiver for Google Home on the phone. Track changes load a fresh media item and stream URL so connected Google Home apps receive a new title together with the artwork. Artwork is served temporarily over the same local connection. If access is denied, casting still works and the app shows how to enable it under **Privacy & Security → Automation**.
-5. Choose **Stop casting** when finished. The app closes the stream and releases the audio tap, restoring local playback. Connection errors, receiver playback changes, and startup timeouts also release capture. Stop in Now Playing ends a Mac audio cast; Play/Pause and track skips control Apple Music. When casting Apple Music, playback changes made directly in Music also send Play/Pause to the receiver. The live stream continues advancing with silence during a pause, so Resume can use a direct Play command without loading a new stream. In All Mac audio mode, pausing Music does not pause other applications on the speaker.
+5. Choose **Stop casting** when finished. The app closes every owned live session and releases the audio tap, restoring local playback. A connection error, playback takeover, or startup failure on any selected destination stops the whole Mac cast. Stop in Now Playing ends a Mac audio cast; Play/Pause and track skips control Apple Music once and fan out receiver controls. The live stream advances with silence during a pause. Individual receivers that expose live seeking resume at a common live position; otherwise they receive Play on their existing sessions. In All Mac audio mode, pausing Music does not pause other applications in the sound mix.
 
 Audio setup runs off the UI thread so macOS permission prompts do not freeze the app. Cancelling while permission is pending prevents that session from starting afterward. Replacing the app with a new build can require allowing audio recording again.
 
@@ -91,7 +91,7 @@ The speaker may take a few seconds to start. The connection adds latency, so it 
 
 The interface adapts to the current window size. Smaller windows use one column; wide windows and full screen place speakers and casting controls beside an expanded Now Playing panel. Artwork and the playback panel grow with the available space.
 
-The selected speaker card is the Cast destination. Home Manager does not change the Mac's default sound output. If you want Bluetooth instead of Cast, pair and select that output through macOS System Settings → Sound.
+Checked destination cards play together. The sliders under each selected destination control its volume; the slider under Now Playing controls all selected volumes. Independent sessions display an **estimated receiver spread**, not measured acoustic delay. Automatic alignment requires fresh timing reports and live-seek support from every receiver. Use a Google Home group for the protocol's own synchronisation and adjust group delay for a TV if needed. AirPlay/UPnP TVs appear under **Other TVs & media devices** with their compatibility limits. Home Manager does not change the Mac's default sound output. If you want Bluetooth instead of Cast, pair and select that output through macOS System Settings → Sound.
 
 ## Shared playback from other devices
 
@@ -103,8 +103,9 @@ When your phone or another Cast app starts music, connect Home Manager to the sa
 - Google's Home APIs target iOS and Android. This native macOS app opens Google Home and its automations in Safari; it does not directly synchronize Google account devices or commission Matter accessories. Existing Home Assistant integrations provide the broader device-control route.
 - The Cast V2 connection accepts the receiver's self-signed local certificate. It should be used only on a trusted local network.
 - Capture preserves stereo 16-bit PCM at the device sample rate, then Apple's AVAssetWriter encodes AAC at 256 kbps and produces half-second fragmented MP4 segments. No third-party encoder is bundled. Audio segments and playlists remain in memory and are removed when casting stops.
-- The live playlist advertises six recent segments (about three seconds), retaining twenty for in-flight requests. Encoding uses a one-second bounded PCM queue and stops on overload. Pausing an Apple Music cast pauses the receiver directly. HLS keeps advancing with silence when the capture tap supplies no samples, so Resume uses a direct Play command on the existing receiver session. All Mac audio remains a continuous mix, independent of Music's playback state.
-- Regression tests cover stereo channel separation, buffered capture, overload reporting, real HTTP HLS delivery, native AAC decoding, silent startup, continuous live delivery, bounded playlist history, separate artwork, song identity, and cancellation. The app supports one receiver at a time and does not synchronize groups.
+- Single/group playback retains the existing six-segment live window and twenty-segment history. Independent multi-device playback keeps a bounded sixty-four-segment window/history (about thirty-two seconds), preserving the same beginning while receivers prepare. The startup hint switches to the live edge after preparation. Encoding uses a one-second bounded PCM queue and stops on overload. All receivers consume identical encoded segments. All Mac audio remains a continuous mix, independent of Music's playback state.
+- `CastSessionCoordinator` owns receiver connections and the start barrier; `CastSyncPlanner` compares fresh positions at a common time and corrects sustained drift by seeking ahead receivers back to the slowest one, only inside an overlapping live window. It does not change pitch or speed to chase drift. Independent receiver sessions are best effort; receiver timestamps do not include TV/audio-system processing delay. Google Home groups provide receiver-managed synchronisation. AirPlay and UPnP discovery do not create Cast compatibility. See [the multi-device guide](docs/MULTI-DEVICE-CASTING.md).
+- Regression tests cover multiple selections, start/confirmation barriers, stale callbacks, shared HTTP media, drift/timing constraints, bounded buffers, cancellation, native stereo AAC, and the whole-home APIs. The existing physical Cast test remains opt-in and is separate from audible multi-device acceptance.
 - Device listening checks are separate from digital audio tests. A Cast session reporting Playing does not by itself prove audible quality or local speaker muting.
 
 ## Historical speaker validation (0.4.x)

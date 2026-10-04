@@ -64,7 +64,7 @@ struct HomeDashboardView: View {
         } detail: {
             Group {
                 switch destination ?? .overview {
-                case .music: ContentView(model: speaker)
+                case .music: ContentView(model: speaker, home: home)
                 case .connections: connections
                 default: inventory
                 }

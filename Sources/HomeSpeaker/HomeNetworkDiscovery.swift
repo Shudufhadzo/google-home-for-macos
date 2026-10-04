@@ -143,7 +143,10 @@ final class HomeNetworkDiscovery: NSObject {
             if let path = text("path"), path.hasPrefix("/"), !path.hasPrefix("//"), let base = url,
                let resolved = URL(string: path, relativeTo: base)?.absoluteURL,
                resolved.host == base.host { url = try? HomeEndpointPolicy.address(resolved.absoluteString, localOnly: true) }
-        } else if type == "_airplay._tcp." { kind = .television; note = "AirPlay receiver discovered. Playback is available through macOS AirPlay." }
+        } else if type == "_airplay._tcp." {
+            kind = .television
+            note = "AirPlay receiver discovered. Playback is available through macOS AirPlay. To play with Google Cast speakers in a synchronised group, this TV needs a group-compatible Cast receiver. AirPlay discovery does not make it a Cast destination."
+        }
         else if type == "_hap._tcp." { kind = .accessory; note = "HomeKit accessory discovered. Pair it with a compatible HomeKit controller or Home Assistant." }
         else if type.hasPrefix("_matter") { kind = .accessory; note = "Matter service discovered. A commissioned compatible controller is required for control." }
         else if type == "_ipp._tcp." { note = "Printer discovered. Add it through macOS Printers & Scanners." }

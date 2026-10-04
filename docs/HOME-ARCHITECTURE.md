@@ -8,7 +8,9 @@
 
 `HomeModel` coordinates local discovery, imported hub state, typed device commands, settings, and the token vault. `HomeNetworkDiscovery` uses Bonjour, a macOS IPv4 route snapshot, and `SSDPSearch`'s bounded multicast request. Network announcements produce inventory/configuration links; they never manufacture device controls.
 
-The original Cast, Core Audio tap, AAC/HLS delivery, and Apple Music modules remain intact. The dashboard forwards a selected Cast endpoint to `SpeakerModel`; it does not replace the audio engine.
+`SpeakerModel` owns one Core Audio tap, PCM relay, AAC encoder/server and Apple Music monitor. `CastSessionCoordinator` owns separate Cast V2 connections for every selected endpoint. It prepares each receiver with the same URL, autoplay disabled and a common starting position, waits for all independent receivers, then broadcasts playback or a supported common live seek. Confirmation requires every receiver to report the expected content as Playing. A failed/taken-over receiver stops every owned live session and releases capture; generations reject late callbacks from retired connections. Track transitions cancel all old media before routing samples into one new timeline. A Google Home group is selected exclusively as one virtual endpoint and manages its own member clocks.
+
+`CastSyncPlanner` estimates fresh media positions at one monotonic time, checks normal playback speed, media/app/session identity and overlapping live-seek ranges, then proposes seeks for sustained drift. Three distinct fresh rounds above 250 ms are required; corrections have an eight-second cooldown. Paused/buffering, stale, foreign, non-seekable, or non-overlapping streams are not corrected. It does not measure acoustic delay or synchronise independent AirPlay/UPnP devices with Cast. See [multi-device playback](MULTI-DEVICE-CASTING.md) for the full contract.
 
 ## Identity and persistence
 
@@ -36,7 +38,7 @@ The default HTTP transport uses an ephemeral URLSession without shared cookies o
 4. Advertise only implemented controls. Gate them on negotiated/reported features and current availability. Network-changing settings need a firmware-specific adapter and a user-facing apply/recovery flow.
 5. Add meaningful fixture tests for actual message formats, authorization errors, unsupported controls, timeout/disconnect races, and address/credential handling. Exercise an actual device separately and record the exact tested model/firmware.
 
-Potential extensions are authenticated OpenWrt/UniFi diagnostics and configuration, a Home Assistant WebSocket registry/event adapter for areas/device relationships and push updates, direct MQTT adapters, and a mobile Google Home SDK companion. They are extension points, not implemented features of 0.5.0.
+Potential extensions are authenticated OpenWrt/UniFi diagnostics and configuration, a Home Assistant WebSocket registry/event adapter for areas/device relationships and push updates, direct MQTT adapters, a mobile Google Home SDK companion, and a separately validated cross-protocol audio bridge. They are extension points, not implemented features of 0.5.1.
 
 ## Verification
 

@@ -1,12 +1,14 @@
 # Device support and setup
 
-Research checked against primary documentation on 3 October 2026. Home Manager 0.5.0 is an unreleased development expansion of Home Speaker, with support determined by protocols and reported capabilities.
+Whole-home research checked on 3 October 2026; Cast groups and TV playback checked against primary documentation and the local app on 4 October 2026. Home Manager 0.5.1 is an unreleased development expansion of Home Speaker, with support determined by protocols and reported capabilities.
 
 ## Supported paths
 
 | Device / ecosystem | Discovery / connection | What this code implements | Required setup / limits |
 | --- | --- | --- | --- |
-| Google Home / Nest / Chromecast and third-party Cast receivers, including Xiaomi L09G | Direct `_googlecast._tcp` | Existing receiver status, playback, volume, and Mac audio capture/streaming | Set up the receiver first; one selected receiver at a time. Display/TV receiver discovery does not establish compatibility with every receiver app. |
+| Google Home / Nest / Chromecast and third-party Cast receivers, including Xiaomi L09G | Direct `_googlecast._tcp` | Receiver status/playback, per-device/master volume, and one shared Mac audio stream to up to eight selected receivers | All must connect and start. Coordinated startup and reported-timeline drift correction are best effort; live seeking is gated on capabilities and fresh reports. Display/TV receiver discovery does not establish compatibility with every receiver app. |
+| Google Home speaker groups | Virtual `_googlecast._tcp` receiver, model `Google Cast Group` | One group destination, shared live AAC, volume, metadata and playback | Create/manage members in Google Home on a phone/tablet. Select the group by itself; receivers handle member synchronisation. Group delay correction may be required for TVs. |
+| Samsung AU7000 (`UA50AU7000KXXA`) observed locally | AirPlay Bonjour and UPnP; no Cast endpoint in the observed scan | Inventory and explicit AirPlay/Cast compatibility guidance in Music & speakers | It cannot join the Cast session through those advertisements. A group-compatible Cast receiver connected to the TV is needed for a Google Home group with Cast speakers. No AirPlay-to-Cast clock bridge is implemented. |
 | Lights, switches, outlets, and helpers | Home Assistant REST | On/off; brightness for lights that advertise a dimmable colour mode | The device must be integrated in Home Assistant and the service must exist. |
 | Fans, thermostats, blinds/covers, vacuums, media players | Home Assistant REST | Advertised fan power/speed, supported target temperature, open/close/stop covers, vacuum start/pause/stop/dock, media play/pause/stop/volume | Entity feature flags and the server's service catalog gate each control. |
 | Sensors, trackers, cameras, locks, alarms, and unimplemented entity domains | Home Assistant REST | Observed state, local room/favourite assignments, dashboard access | Camera streaming, lock/unlock, alarm actions, and arbitrary service execution are not implemented. Use the authenticated hub dashboard for additional settings. |

@@ -8,12 +8,19 @@ struct CastDevice: Identifiable, Equatable {
     let model: String
     let host: String
     let port: UInt16
+
+    var isGroup: Bool { model.caseInsensitiveCompare("Google Cast Group") == .orderedSame || id.hasPrefix("Google-Cast-Group-") }
 }
 
 @MainActor
 final class SpeakerModel: NSObject, ObservableObject {
     @Published private(set) var devices: [CastDevice] = []
-    @Published private(set) var selectedDevice: CastDevice?
+    @Published private(set) var selectedDevices: [CastDevice] = []
+    @Published private(set) var receiverStatuses: [String: CastStatus] = [:]
+    @Published private(set) var connectedDeviceIDs: Set<String> = []
+    @Published private(set) var deviceErrors: [String: String] = [:]
+    @Published private(set) var syncMessage = ""
+    @Published private(set) var canAlign = false
     @Published private(set) var isConnected = false
     @Published private(set) var isCastingMacAudio = false
     @Published private(set) var isChangingTrack = false
@@ -26,6 +33,22 @@ final class SpeakerModel: NSObject, ObservableObject {
     @Published private(set) var musicTrack: MusicTrack?
     @Published var castSource: CastAudioSource = .system
     @Published private var receiverStatus = CastStatus()
+
+    var selectedDevice: CastDevice? { selectedDevices.first }
+    var destinationNames: String { selectedDevices.map(\.name).joined(separator: ", ") }
+    var hasMultipleDestinations: Bool { selectedDevices.count > 1 }
+
+    func destinationState(_ device: CastDevice) -> String {
+        if let error = deviceErrors[device.id] { return error }
+        guard connectedDeviceIDs.contains(device.id) else { return "Connecting…" }
+        guard isCastingMacAudio else { return "Connected" }
+        guard let liveURL, let status = receiverStatuses[device.id], status.contentID == liveURL.absoluteString else { return "Preparing…" }
+        if let rate = status.playbackRate, status.playerState == "PLAYING" {
+            if rate == 0 { return "Playing · waiting for advancing media time" }
+            return "Playing · \(String(format: "%.2g", rate))× speed"
+        }
+        return status.playerState.capitalized
+    }
 
     var trackTitle: String {
         if isCastingMacAudio { return musicTrack?.title ?? (castSource == .appleMusic ? "Apple Music" : "Mac audio") }
@@ -40,19 +63,18 @@ final class SpeakerModel: NSObject, ObservableObject {
     }
     var isPlaying: Bool { isCastingMacAudio ? (musicTrack?.isPlaying ?? receiverStatus.isPlaying) : receiverStatus.isPlaying }
     var speakerArtworkURL: URL? { isCastingMacAudio ? nil : receiverStatus.artworkURL }
-    var canControlPlayback: Bool { isCastingMacAudio ? musicTrack != nil && !isChangingTrack : isConnected && receiverStatus.mediaSessionID != nil }
-    var canSkipNext: Bool { isCastingMacAudio ? musicTrack != nil && !isChangingTrack : isConnected && receiverStatus.supportsNext }
-    var canSkipPrevious: Bool { isCastingMacAudio ? musicTrack != nil && !isChangingTrack : isConnected && receiverStatus.supportsPrevious }
+    var canControlPlayback: Bool { isCastingMacAudio ? musicTrack != nil && !isChangingTrack : !hasMultipleDestinations && isConnected && receiverStatus.mediaSessionID != nil }
+    var canSkipNext: Bool { isCastingMacAudio ? musicTrack != nil && !isChangingTrack : !hasMultipleDestinations && isConnected && receiverStatus.supportsNext }
+    var canSkipPrevious: Bool { isCastingMacAudio ? musicTrack != nil && !isChangingTrack : !hasMultipleDestinations && isConnected && receiverStatus.supportsPrevious }
     var canStop: Bool { isCastingMacAudio || canControlPlayback }
 
     private var browser: NetServiceBrowser?
     private var resolving: [String: NetService] = [:]
-    private var client: CastClient?
+    private let sessions = CastSessionCoordinator()
     private var audioTap: SystemAudioTap?
     private var audioServer: LiveAudioServer?
     private var musicMonitor: AppleMusicMonitor?
     private var scanGeneration = 0
-    private var connectionID = UUID()
     private var castingID: UUID?
     private var liveURL: URL?
     private var castPlaybackConfirmed = false
@@ -60,8 +82,39 @@ final class SpeakerModel: NSObject, ObservableObject {
     private var appliedMusicPlayback: Bool?
     private var audioStreamID = UUID()
     private var playbackAttemptID = UUID()
+    private var resumeWhenPrepared: String?
     private var castSampleRate = 48_000
     private let audioRelay = PCMStreamRelay()
+
+    override init() {
+        super.init()
+        sessions.onUpdate = { [weak self] in self?.updateDestinations() }
+        sessions.onPrepared = { [weak self] in
+            guard let self else { return }
+            self.audioServer?.finishCoordinatedStartup()
+            if let id = self.resumeWhenPrepared { self.resumeWhenPrepared = nil; self.musicMonitor?.resumePreparedTrack(id) }
+        }
+        sessions.onPlaybackConfirmed = { [weak self] in
+            guard let self, self.isCastingMacAudio else { return }
+            self.castPlaybackConfirmed = true; self.isChangingTrack = false
+            self.audioServer?.finishCoordinatedStartup()
+            self.message = "Casting \(self.castSource.rawValue) to \(self.destinationNames). Local playback is muted."
+        }
+        sessions.onFailure = { [weak self] error in
+            guard let self else { return }; self.stopMacAudio(); self.message = error
+        }
+    }
+
+    private func updateDestinations() {
+        selectedDevices = sessions.selectedDevices; receiverStatuses = sessions.statuses
+        connectedDeviceIDs = sessions.connected; deviceErrors = sessions.errors
+        receiverStatus = sessions.primaryStatus; isConnected = sessions.allConnected
+        let levels = selectedDevices.compactMap { sessions.statuses[$0.id]?.volume }
+        if !levels.isEmpty { volume = levels.reduce(0, +) / Double(levels.count) }
+        syncMessage = sessions.syncMessage; canAlign = sessions.canAlign
+        // Capture preparation/restoration messages have their own lifecycle.
+        if !isCastingMacAudio && !isRestoringAudio || sessions.activeContentID != nil { message = sessions.message }
+    }
 
     func start() {
         scanAgain()
@@ -69,11 +122,10 @@ final class SpeakerModel: NSObject, ObservableObject {
 
     func stop() {
         stopMacAudio()
-        connectionID = UUID()
         browser?.stop()
         browser = nil
-        client?.disconnect()
-        client = nil
+        resolving.values.forEach { $0.stop() }; resolving.removeAll()
+        sessions.disconnectAll()
         isConnected = false
     }
 
@@ -82,115 +134,71 @@ final class SpeakerModel: NSObject, ObservableObject {
         let generation = scanGeneration
         browser?.stop()
         devices.removeAll()
-        resolving.removeAll()
+        resolving.values.forEach { $0.stop() }; resolving.removeAll()
         let browser = NetServiceBrowser()
         browser.delegate = self
         self.browser = browser
         browser.searchForServices(ofType: "_googlecast._tcp.", inDomain: "local.")
-        if !isCastingMacAudio { message = "Searching for Cast speakers…" }
+        if !isCastingMacAudio { message = "Searching for Cast speakers, TVs, and groups…" }
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 10_000_000_000)
             guard let self, self.scanGeneration == generation, self.devices.isEmpty else { return }
-            self.message = "No Cast speakers found. Check Wi-Fi and Local Network access, then scan again."
+            self.message = "No Cast destinations found. Check Wi-Fi and Local Network access, then scan again."
         }
     }
 
     func connect(to device: CastDevice) {
-        stopMacAudio()
-        connectionID = UUID()
-        let generation = connectionID
-        client?.disconnect()
-        isConnected = false
-        selectedDevice = device
-        receiverStatus = CastStatus()
-        message = "Connecting to \(device.name)…"
-        let client = CastClient(device: device)
-        client.onStatus = { [weak self] status in
-            Task { @MainActor [weak self] in
-                guard let self, self.connectionID == generation else { return }
-                self.volume = status.volume
-                let firstStatus = !self.isConnected
-                self.isConnected = true
-                self.receiverStatus = status
-                if self.isCastingMacAudio {
-                    if let liveURL = self.liveURL, status.contentID == liveURL.absoluteString, status.playerState == "PLAYING" {
-                        self.castPlaybackConfirmed = true
-                        self.isChangingTrack = false
-                        self.message = "Casting \(self.castSource.rawValue) to \(device.name). Local playback is muted."
-                    } else if let liveURL = self.liveURL, status.contentID == liveURL.absoluteString,
-                              status.playerState == "BUFFERING" {
-                        self.message = "Speaker is buffering live audio…"
-                    } else if self.castPlaybackConfirmed,
-                              status.receiverAppID != "CC1AD845" || status.contentID != self.liveURL?.absoluteString || status.playerState == "IDLE" {
-                        self.stopMacAudio()
-                        self.message = "Speaker playback changed. Casting stopped and Mac sound was restored."
-                    }
-                } else if firstStatus {
-                    self.message = "Connected to \(device.name)."
-                }
-            }
-        }
-        client.onError = { [weak self] error in
-            Task { @MainActor [weak self] in
-                guard let self, self.connectionID == generation else { return }
-                self.stopMacAudio()
-                self.message = error
-            }
-        }
-        client.onDisconnect = { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self, self.connectionID == generation else { return }
-                self.stopMacAudio()
-                self.isConnected = false
-                self.receiverStatus = CastStatus()
-                self.message = "Speaker disconnected. Mac sound was restored. Select the speaker to reconnect."
-            }
-        }
-        client.onProgress = { [weak self] progress in
-            Task { @MainActor [weak self] in
-                guard let self, self.connectionID == generation else { return }
-                self.message = progress
-            }
-        }
-        self.client = client
-        client.connect()
+        guard !isCastingMacAudio, !isRestoringAudio else { message = "Stop casting before changing destinations."; return }
+        sessions.select(device)
     }
+
+    func toggleDestination(_ device: CastDevice) {
+        guard !isCastingMacAudio, !isRestoringAudio else { return }
+        sessions.toggle(device)
+    }
+    func removeDestination(_ device: CastDevice) {
+        guard !isCastingMacAudio, !isRestoringAudio else { return }; sessions.remove(device.id)
+    }
+    func alignDestinations() { sessions.alignNow() }
 
     func togglePlayback() {
         if isCastingMacAudio { musicMonitor?.command(.playPause) }
-        else { client?.setPlaying(!isPlaying) }
+        else if canControlPlayback { sessions.setPlaying(!isPlaying) }
     }
 
     func stopPlayback() {
         if isCastingMacAudio { stopMacAudio() }
-        else { client?.stopPlayback() }
+        else if canStop { sessions.stopPlayback() }
     }
 
     func skipPrevious() {
         if isCastingMacAudio { changeMusicTrack(.previous) }
-        else { client?.skip(next: false) }
+        else if canSkipPrevious { sessions.skip(next: false) }
     }
 
     func skipNext() {
         if isCastingMacAudio { changeMusicTrack(.next) }
-        else { client?.skip(next: true) }
+        else if canSkipNext { sessions.skip(next: true) }
     }
 
     func setVolume(_ value: Double) {
         volume = value
-        client?.setVolume(value)
+        sessions.setVolume(value)
     }
+
+    func setVolume(_ value: Double, for device: CastDevice) { sessions.setVolume(value, deviceID: device.id) }
 
     func retryMusicInfo() { musicMessage = ""; musicMonitor?.start() }
 
     func startMacAudio() {
         guard !isCastingMacAudio, !isRestoringAudio else { return }
-        guard isConnected, client != nil else {
-            message = "Connect to a speaker before sending Mac audio."
+        guard isConnected else {
+            message = "Connect every selected destination before sending Mac audio."
             return
         }
         let id = UUID()
         castingID = id
+        playbackAttemptID = UUID()
         isCastingMacAudio = true
         castPlaybackConfirmed = false
         musicTrack = nil
@@ -234,7 +242,7 @@ final class SpeakerModel: NSObject, ObservableObject {
                 }
                 musicMonitor = monitor
                 monitor.start()
-                message = "Waiting for the speaker. Local playback is muted."
+                message = "Waiting for selected destinations. Local playback is muted."
             } catch {
                 guard castingID == id else { return }
                 stopMacAudio()
@@ -246,6 +254,7 @@ final class SpeakerModel: NSObject, ObservableObject {
     func stopMacAudio() {
         guard isCastingMacAudio else { return }
         castingID = nil
+        playbackAttemptID = UUID()
         audioStreamID = UUID()
         isChangingTrack = false
         audioRelay.route(to: nil)
@@ -273,7 +282,8 @@ final class SpeakerModel: NSObject, ObservableObject {
         audioQuality = ""
         liveURL = nil
         castPlaybackConfirmed = false
-        client?.cancelMacAudio()
+        resumeWhenPrepared = nil
+        sessions.cancelMacAudio(); updateDestinations()
         message = "Stopping capture…"
     }
 
@@ -285,9 +295,9 @@ final class SpeakerModel: NSObject, ObservableObject {
         // The HLS timeline keeps advancing with silence while Music is paused.
         // Resume the existing session instead of loading a new player and waiting
         // for its startup buffer again.
-        client?.setPlaying(track.isPlaying)
+        sessions.setPlaying(track.isPlaying)
         message = track.isPlaying ? "Casting Apple Music. Local playback is muted."
-                                  : "Apple Music and the speaker are paused."
+                                  : "Apple Music and all destinations are paused."
     }
 
     private func changeMusicTrack(_ command: AppleMusicMonitor.Command?, observedTrack: MusicTrack? = nil) {
@@ -302,8 +312,8 @@ final class SpeakerModel: NSObject, ObservableObject {
         audioRelay.route(to: nil)
         audioServer?.stop()
         audioServer = nil
-        client?.cancelMacAudio()
-        message = "Changing song. Clearing the speaker's buffered audio…"
+        sessions.cancelMacAudio()
+        message = "Changing song. Clearing every destination's buffered audio…"
         monitor.prepareTransition(command, rewind: rewind) { [weak self] track in
             Task { @MainActor [weak self] in
                 guard let self, self.isCastingMacAudio, self.audioStreamID == transition else { return }
@@ -325,7 +335,8 @@ final class SpeakerModel: NSObject, ObservableObject {
         castPlaybackConfirmed = false
         publishedTrackID = track?.id
         appliedMusicPlayback = nil
-        let server = LiveAudioServer(sampleRate: castSampleRate)
+        resumeWhenPrepared = hasMultipleDestinations && resumeMusic ? track?.id : nil
+        let server = LiveAudioServer(sampleRate: castSampleRate, coordinatedStartup: hasMultipleDestinations)
         audioServer = server
         audioRelay.route { [weak server] in server?.append($0) }
         server.onReady = { [weak self, weak server] url in
@@ -343,14 +354,16 @@ final class SpeakerModel: NSObject, ObservableObject {
                                               album: track.album, artworkURL: artworkURL)
                 }
                 self.liveURL = metadata.streamURL(at: url)
-                self.client?.playMacAudio(at: url, metadata: metadata)
-                self.message = resumeMusic ? "Preparing the speaker for the new song…" : "Starting Mac audio…"
+                guard self.sessions.playMacAudio(at: url, metadata: metadata) else {
+                    self.stopMacAudio(); self.message = "A destination disconnected before playback. Reconnect and try again."; return
+                }
+                self.message = resumeMusic ? "Preparing all destinations for the new song…" : "Starting Mac audio…"
             }
         }
         server.onReceiver = { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, self.isCastingMacAudio, self.audioStreamID == streamID else { return }
-                self.message = "Speaker is buffering the new stream. Local playback is muted."
+                self.message = "Destinations are buffering the shared stream. Local playback is muted."
             }
         }
         server.onError = { [weak self] error in
@@ -362,7 +375,7 @@ final class SpeakerModel: NSObject, ObservableObject {
         }
         try server.start()
         // Start at the beginning of a fresh segmented timeline, preserving the song intro.
-        if resumeMusic, let track { musicMonitor?.resumePreparedTrack(track.id) }
+        if resumeMusic, !hasMultipleDestinations, let track { musicMonitor?.resumePreparedTrack(track.id) }
         watchPlaybackStartup()
     }
 
@@ -373,7 +386,7 @@ final class SpeakerModel: NSObject, ObservableObject {
             try? await Task.sleep(nanoseconds: 25_000_000_000)
             guard let self, self.isCastingMacAudio, self.playbackAttemptID == attempt, !self.castPlaybackConfirmed else { return }
             self.stopMacAudio()
-            self.message = "Speaker did not start playback. Check Wi-Fi and try again."
+            self.message = "Not every destination started playback. Casting stopped. Check Wi-Fi and try again."
         }
     }
 
@@ -383,6 +396,7 @@ final class SpeakerModel: NSObject, ObservableObject {
 extension SpeakerModel: NetServiceBrowserDelegate, NetServiceDelegate {
     nonisolated func netServiceBrowser(_ browser: NetServiceBrowser, didFind service: NetService, moreComing: Bool) {
         Task { @MainActor in
+            guard self.browser === browser, resolving.count < 128 else { return }
             let key = service.name + service.domain
             resolving[key] = service
             service.delegate = self
@@ -392,17 +406,15 @@ extension SpeakerModel: NetServiceBrowserDelegate, NetServiceDelegate {
 
     nonisolated func netServiceBrowser(_ browser: NetServiceBrowser, didRemove service: NetService, moreComing: Bool) {
         Task { @MainActor in
+            guard self.browser === browser else { return }
             let key = service.name + service.domain
-            resolving.removeValue(forKey: key)
+            resolving.removeValue(forKey: key)?.stop()
             devices.removeAll { $0.id == key }
-            if selectedDevice?.id == key {
-                stopMacAudio()
-                client?.disconnect()
-                client = nil
-                isConnected = false
-                selectedDevice = nil
-                receiverStatus = CastStatus()
-                message = "Speaker went offline."
+            if let device = selectedDevices.first(where: { $0.id == key }) {
+                let wasCasting = isCastingMacAudio
+                if wasCasting { stopMacAudio() }
+                sessions.remove(key)
+                if wasCasting { message = "\(device.name) went offline. Casting stopped and Mac sound was restored." }
             }
         }
     }
@@ -410,10 +422,11 @@ extension SpeakerModel: NetServiceBrowserDelegate, NetServiceDelegate {
     nonisolated func netServiceDidResolveAddress(_ service: NetService) {
         Task { @MainActor in
             let key = service.name + service.domain
-            guard let resolvedHost = service.hostName, service.port > 0, service.port <= 65535 else { return }
+            guard resolving[key] === service, let resolvedHost = service.hostName, service.port > 0, service.port <= 65535 else { return }
             let host = service.addresses?.compactMap { address -> String? in
                 address.withUnsafeBytes { bytes -> String? in
-                    guard let pointer = bytes.baseAddress?.assumingMemoryBound(to: sockaddr.self),
+                    guard address.count >= MemoryLayout<sockaddr_in>.size,
+                          let pointer = bytes.baseAddress?.assumingMemoryBound(to: sockaddr.self),
                           pointer.pointee.sa_family == sa_family_t(AF_INET) else { return nil }
                     var name = [CChar](repeating: 0, count: Int(NI_MAXHOST))
                     let result = getnameinfo(pointer, socklen_t(address.count), &name, socklen_t(name.count), nil, 0, NI_NUMERICHOST)
@@ -427,13 +440,15 @@ extension SpeakerModel: NetServiceBrowserDelegate, NetServiceDelegate {
             devices.removeAll { $0.id == key }
             devices.append(device)
             devices.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-            resolving.removeValue(forKey: key)
             if !isCastingMacAudio && !isConnected { message = "Found \(devices.count) Cast device\(devices.count == 1 ? "" : "s")." }
         }
     }
 
     nonisolated func netServiceBrowser(_ browser: NetServiceBrowser, didNotSearch errorDict: [String: NSNumber]) {
-        Task { @MainActor in message = "Could not scan the local network. Check Local Network access in System Settings." }
+        Task { @MainActor in
+            guard self.browser === browser else { return }
+            message = "Could not scan the local network. Check Local Network access in System Settings."
+        }
     }
 }
 

@@ -1,4 +1,5 @@
 import AppKit
+import HomeCore
 import SwiftUI
 
 private enum Palette {
@@ -24,6 +25,7 @@ struct HomeSpeakerApp: App {
 
 struct ContentView: View {
     @ObservedObject var model: SpeakerModel
+    var home: HomeModel
 
     var body: some View {
         GeometryReader { geometry in
@@ -46,6 +48,7 @@ struct ContentView: View {
                         playerSection()
                         audioSection
                     }
+                    compatibilitySection
                     statusLine
                 }
                 .padding(expanded ? 32 : 24)
@@ -89,15 +92,15 @@ struct ContentView: View {
 
     private var speakerSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            heading("Speakers", detail: "Choose a Cast device on your Wi-Fi")
+            heading("Destinations", detail: model.selectedDevices.isEmpty ? "Select one or more" : "\(model.selectedDevices.count) selected")
             if model.devices.isEmpty {
                 HStack(spacing: 14) {
                     Image(systemName: "wifi.exclamationmark")
                         .font(.title2)
                         .foregroundStyle(Palette.blue)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Looking for speakers").font(.headline)
-                        Text("Keep your Mac and speaker on the same Wi-Fi network.")
+                        Text("Looking for Cast destinations").font(.headline)
+                        Text("Keep your Mac and receivers on the same Wi-Fi network.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
@@ -110,15 +113,20 @@ struct ContentView: View {
                     ForEach(model.devices) { device in speakerCard(device) }
                 }
             }
+            Text(model.isCastingMacAudio ? "Stop casting to change destinations." : "Select individual speakers and Cast TVs together, or choose one Google Home group. A group replaces individual selections and handles synchronisation.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if !model.selectedDevices.isEmpty { destinationControls }
+            Button("Google Home group setup") { home.open(URL(string: "https://support.google.com/googlehome/answer/7174267?hl=en")!) }
+                .font(.caption)
         }
     }
 
     private func speakerCard(_ device: CastDevice) -> some View {
-        let selected = model.selectedDevice?.id == device.id
-        return Button { model.connect(to: device) } label: {
+        let selected = model.selectedDevices.contains { $0.id == device.id }
+        return Button { model.toggleDestination(device) } label: {
             VStack(alignment: .leading, spacing: 15) {
                 HStack {
-                    Image(systemName: device.model.localizedCaseInsensitiveContains("group") ? "hifispeaker.and.homepod.fill" : "hifispeaker.fill")
+                    Image(systemName: device.isGroup ? "hifispeaker.and.homepod.fill" : (device.model.localizedCaseInsensitiveContains("TV") || device.model.localizedCaseInsensitiveContains("Chromecast") ? "tv.fill" : "hifispeaker.fill"))
                         .font(.title2)
                         .foregroundStyle(selected ? Palette.blue : .secondary)
                     Spacer()
@@ -139,7 +147,70 @@ struct ContentView: View {
             .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(selected ? Palette.blue.opacity(0.8) : Color.secondary.opacity(0.15), lineWidth: selected ? 2 : 1))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(device.name), \(device.model), \(selected ? "selected" : "select speaker")")
+        .disabled(model.isCastingMacAudio || model.isRestoringAudio)
+        .accessibilityLabel("\(device.name), \(device.model), \(selected ? "selected, remove destination" : "add destination")")
+    }
+
+    private var destinationControls: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(model.selectedDevices) { device in
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack {
+                        Text(device.name).font(.subheadline.weight(.semibold))
+                        Spacer()
+                        Button { model.removeDestination(device) } label: { Image(systemName: "xmark.circle") }
+                            .buttonStyle(.plain).disabled(model.isCastingMacAudio || model.isRestoringAudio)
+                            .accessibilityLabel("Remove \(device.name)")
+                    }
+                    Text(model.destinationState(device))
+                        .font(.caption).foregroundStyle(.secondary)
+                    Slider(value: Binding(get: { model.receiverStatuses[device.id]?.volume ?? 0.5 }, set: { model.setVolume($0, for: device) }), in: 0...1)
+                        .disabled(!model.connectedDeviceIDs.contains(device.id))
+                        .accessibilityLabel("\(device.name) volume")
+                }
+            }
+            if !model.syncMessage.isEmpty {
+                Text(model.syncMessage).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true).monospacedDigit()
+                if model.hasMultipleDestinations {
+                    Button("Align playback now") { model.alignDestinations() }.disabled(!model.canAlign)
+                        .help("Align fresh receiver positions when every device supports live seeking")
+                }
+            }
+        }
+        .padding(14).background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private var otherTVs: [HomeDevice] {
+        let castHosts = Set(model.devices.map(\.host))
+        let candidates = home.networkDevices.filter { $0.kind == .television && !($0.host.map(castHosts.contains) ?? false) }
+        // Prefer a TV's AirPlay advertisement to its less specific UPnP record.
+        let ordered = candidates.sorted { $0.id.contains("_airplay.") && !$1.id.contains("_airplay.") }
+        var seen: Set<String> = []
+        return ordered.filter { seen.insert($0.host ?? $0.id).inserted }
+    }
+
+    @ViewBuilder
+    private var compatibilitySection: some View {
+        if !otherTVs.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Other TVs & media devices").font(.headline)
+                ForEach(otherTVs) { device in
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: "tv").foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(device.name).font(.subheadline.weight(.semibold))
+                            Text(device.id.contains("_airplay.") ? "AirPlay receiver · outside the Cast session" : "UPnP media device · Cast playback not advertised")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                Text("To play one of these TVs with Google Cast speakers, connect a group-compatible Cast receiver to the TV and add it to a Google Home group. AirPlay and Cast use separate playback systems.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(18).frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 18))
+        }
     }
 
     private func playerSection(expanded: Bool = false, height: CGFloat = 0) -> some View {
@@ -147,7 +218,7 @@ struct ContentView: View {
         let layout = expanded ? AnyLayout(VStackLayout(alignment: .center, spacing: 24))
                               : AnyLayout(HStackLayout(alignment: .center, spacing: 22))
         return VStack(alignment: .leading, spacing: 12) {
-            heading("Now playing", detail: model.selectedDevice?.name ?? "Select a speaker above")
+            heading("Now playing", detail: model.destinationNames.isEmpty ? "Select destinations" : model.destinationNames)
             layout {
                 Group {
                     if let data = model.musicTrack?.artwork, let cover = NSImage(data: data) {
@@ -198,7 +269,7 @@ struct ContentView: View {
                 Image(systemName: "speaker.fill").foregroundStyle(.secondary)
                 Slider(value: Binding(get: { model.volume }, set: { model.setVolume($0) }), in: 0...1)
                     .disabled(!model.isConnected)
-                    .accessibilityLabel("Speaker volume")
+                    .accessibilityLabel("All destinations volume")
                 Image(systemName: "speaker.wave.3.fill").foregroundStyle(.secondary)
                 Text("\(Int(model.volume * 100))%")
                     .monospacedDigit().font(.caption).frame(width: 36, alignment: .trailing)
@@ -229,7 +300,7 @@ struct ContentView: View {
 
     private var audioSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            heading("Mac audio", detail: "Play sound from this Mac on your speaker")
+            heading("Mac audio", detail: "One audio stream to every destination")
             Picker("Cast from", selection: $model.castSource) {
                 ForEach(CastAudioSource.allCases) { source in Text(source.rawValue).tag(source) }
             }
@@ -244,7 +315,7 @@ struct ContentView: View {
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Cast over Wi-Fi").font(.headline)
-                        Text(model.isCastingMacAudio ? model.audioQuality : (model.castSource == .appleMusic ? "Only Music is sent to the speaker. Other Mac sound stays local." : "All Mac audio is sent to the selected speaker."))
+                        Text(model.isCastingMacAudio ? model.audioQuality : (model.castSource == .appleMusic ? "Only Music is sent to every selected destination. Other Mac sound stays local." : "All Mac audio is sent to every selected destination."))
                             .font(.subheadline).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         if model.isCastingMacAudio {

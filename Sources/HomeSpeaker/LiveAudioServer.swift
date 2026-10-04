@@ -14,7 +14,7 @@ final class LiveAudioServer {
     private var timer: DispatchSourceTimer?
     private var encoder: LiveAudioEncoder?
     private var pendingPCM = Data()
-    private var playlist = LiveAudioPlaylist()
+    private var playlist: LiveAudioPlaylist
     private var stopped = false
     private var announced = false
     private var received = false
@@ -26,8 +26,9 @@ final class LiveAudioServer {
     private let sampleRate: Int
     private let buffer: PCMStreamBuffer
 
-    init(sampleRate: Int) {
+    init(sampleRate: Int, coordinatedStartup: Bool = false) {
         self.sampleRate = sampleRate
+        playlist = LiveAudioPlaylist(coordinatedStartup: coordinatedStartup)
         buffer = PCMStreamBuffer(capacity: sampleRate * 4)
     }
 
@@ -78,6 +79,8 @@ final class LiveAudioServer {
     }
 
     func setArtwork(_ data: Data?) { queue.async { [self] in artwork = data } }
+
+    func finishCoordinatedStartup() { queue.async { [self] in playlist.finishCoordinatedStartup() } }
 
     func append(_ pcm: Data) {
         guard !buffer.append(pcm) else { return }
@@ -132,7 +135,7 @@ final class LiveAudioServer {
     }
 
     private func accept(_ connection: NWConnection) {
-        guard !stopped, requests.count < 16 else { connection.cancel(); return }
+        guard !stopped, requests.count < 64 else { connection.cancel(); return }
         let id = ObjectIdentifier(connection)
         requests[id] = connection
         connection.stateUpdateHandler = { [weak self, weak connection] state in

@@ -102,6 +102,58 @@ final class LiveAudioServerTests: XCTestCase {
         wait(for: [ready], timeout: 5)
     }
 
+    func testTwoHTTPReceiversReadTheSameStartupAndAACSegments() throws {
+        let ready = expectation(description: "Shared multi-receiver stream is ready")
+        let server = LiveAudioServer(sampleRate: 48_000, coordinatedStartup: true)
+        var streamURL: URL?
+        server.onReady = { url in
+            var parts = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+            parts.host = "127.0.0.1"; streamURL = parts.url; ready.fulfill()
+        }
+        server.onError = { XCTFail($0) }
+        try server.start(); defer { server.stop() }
+        wait(for: [ready], timeout: 5)
+        let url = try XCTUnwrap(streamURL)
+        let first = try fetch(url).0
+        XCTAssertTrue(String(decoding: first, as: UTF8.self).contains("TIME-OFFSET=0,PRECISE=YES"))
+        let segment = try XCTUnwrap(String(decoding: first, as: UTF8.self).split(separator: "\n").first { $0.hasSuffix(".m4s") })
+        let base = url.deletingLastPathComponent()
+        let reads = expectation(description: "Two independent HTTP sessions fetch identical media")
+        reads.expectedFulfillmentCount = 2
+        var media: [Data?] = [nil, nil]
+        let lock = NSLock()
+        let clients = [URLSession(configuration: .ephemeral), URLSession(configuration: .ephemeral)]
+        defer { clients.forEach { $0.invalidateAndCancel() } }
+        for (index, client) in clients.enumerated() {
+            client.dataTask(with: base.appendingPathComponent(String(segment))) { data, response, error in
+                XCTAssertNil(error); XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+                lock.lock(); media[index] = data; lock.unlock()
+                reads.fulfill()
+            }.resume()
+        }
+        wait(for: [reads], timeout: 5)
+        XCTAssertFalse(try XCTUnwrap(media[0]).isEmpty)
+        XCTAssertEqual(media[0], media[1], "Receivers consume the same encoded timeline, not independent captures")
+        server.finishCoordinatedStartup()
+        XCTAssertTrue(String(decoding: try fetch(url).0, as: UTF8.self).contains("TIME-OFFSET=-1.5,PRECISE=YES"))
+    }
+
+    func testCoordinatedStartupRetainsTheBeginningAndMemoryRemainsBounded() {
+        var playlist = LiveAudioPlaylist(coordinatedStartup: true)
+        playlist.initialization = Data([1])
+        for _ in 0..<40 { playlist.append(Data([2]), duration: 0.5) }
+        var text = String(decoding: playlist.manifest, as: UTF8.self)
+        XCTAssertTrue(text.contains("#EXT-X-MEDIA-SEQUENCE:0"), "A slow second receiver can load the same starting point")
+        XCTAssertTrue(text.contains("TIME-OFFSET=0,"))
+        playlist.finishCoordinatedStartup()
+        for _ in 40..<10_000 { playlist.append(Data([2]), duration: 0.5) }
+        text = String(decoding: playlist.manifest, as: UTF8.self)
+        XCTAssertEqual(playlist.segments.count, 64)
+        XCTAssertEqual(text.components(separatedBy: "#EXTINF:").count - 1, 64)
+        XCTAssertTrue(text.contains("#EXT-X-MEDIA-SEQUENCE:9936")); XCTAssertTrue(text.contains("TIME-OFFSET=-1.5,"))
+        XCTAssertFalse(text.contains("#EXT-X-ENDLIST"))
+    }
+
     private func fetch(_ url: URL) throws -> (Data, Int) {
         let done = expectation(description: "HTTP \(url.lastPathComponent)")
         var result: (Data, Int)?
