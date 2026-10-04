@@ -5,6 +5,7 @@ enum MixedPlaybackTiming {
     struct Assessment {
         var target: Double?
         var difference: Double?
+        var castTarget: Double?
         var note: String
     }
 
@@ -36,6 +37,10 @@ enum MixedPlaybackTiming {
         let estimatedAirPlayPosition = airPlayPosition + (now - airPlaySampledAt)
         let difference = estimatedAirPlayPosition - slowestCastPosition
         let target = slowestCastPosition + offset
+        let castTarget = estimatedAirPlayPosition - offset
+        let canSeekCast = statuses.values.allSatisfy { status in
+            status.supportsSeek && status.liveSeekableRange.map { castTarget >= $0.lowerBound + 0.1 && castTarget <= $0.upperBound - 0.1 } == true
+        }
         guard estimatedAirPlayPosition.isFinite, difference.isFinite, target.isFinite else {
             return Assessment(note: "Playback timing is unavailable.")
         }
@@ -43,9 +48,9 @@ enum MixedPlaybackTiming {
             range.lowerBound.isFinite && range.upperBound.isFinite && range.lowerBound >= 0 &&
             target >= range.lowerBound + 0.1 && target <= range.upperBound - 0.1
         }) else {
-            return Assessment(difference: difference, note: "Estimated media timing only. The adjustment is outside AirPlay's current live window.")
+            return Assessment(difference: difference, castTarget: canSeekCast ? castTarget : nil, note: "Estimated media timing only. The adjustment is outside AirPlay's current live window.")
         }
-        return Assessment(target: target, difference: difference,
-                          note: "Apply this media timing adjustment manually. TV sound processing delay is not measured.")
+        return Assessment(target: target, difference: difference, castTarget: canSeekCast ? castTarget : nil,
+                          note: "Automatic alignment targets under 100 ms. TV sound processing delay is not measured.")
     }
 }

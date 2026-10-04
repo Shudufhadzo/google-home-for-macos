@@ -1,62 +1,35 @@
-import HomeCore
 import SwiftUI
 
+/// AirPlay is a destination alongside the Cast cards, with one selection control.
 struct AirPlayDestinationSection: View {
     @ObservedObject var model: SpeakerModel
-    let deviceNames: [String]
+    @ObservedObject var output: AirPlayAudioPlayer
+    let deviceName: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Toggle("Also play on an AirPlay TV", isOn: $model.includeAirPlay)
-                .disabled(model.isCastingMacAudio || model.isRestoringAudio)
-            if model.includeAirPlay {
-                AirPlayOutputControls(model: model, output: model.airPlay, deviceNames: deviceNames)
-            } else {
-                Text("Add an AirPlay TV alongside your Cast speakers or Google Home group.")
+        VStack(alignment: .leading, spacing: 15) {
+            HStack {
+                Image(systemName: "airplay.audio")
+                    .font(.title2)
+                    .foregroundStyle(model.includeAirPlay ? Palette.blue : .secondary)
+                Spacer()
+                AirPlayRoutePicker(player: output)
+                    .frame(width: 44, height: 34)
+                    .disabled(!model.includeAirPlay)
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(deviceName ?? "AirPlay")
+                    .font(.headline).lineLimit(1)
+                Text(output.isAirPlayRouteSelected ? "Connected" : "AirPlay")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Toggle("Play with AirPlay", isOn: $model.includeAirPlay)
+                .font(.caption)
+                .disabled(model.isCastingMacAudio || model.isRestoringAudio)
         }
+        .frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
         .padding(16)
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 16))
-    }
-}
-
-private struct AirPlayOutputControls: View {
-    @ObservedObject var model: SpeakerModel
-    @ObservedObject var output: AirPlayAudioPlayer
-    let deviceNames: [String]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(output.routeName ?? "Choose AirPlay output").font(.subheadline.weight(.semibold))
-                    Text(output.isAirPlayRouteSelected ? "AirPlay route selected" : "Use the AirPlay button to select your TV")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                AirPlayRoutePicker(player: output).frame(width: 44, height: 34)
-            }
-            if !deviceNames.isEmpty {
-                Text("Discovered: \(deviceNames.joined(separator: ", "))")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Text(model.isCastingMacAudio ? output.message : "Select your Cast speakers, start casting, then choose the TV here. In Music, choose this Mac as the output so Home Manager can capture it.")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            Text("Both outputs use the same audio at normal speed. AirPlay and Cast buffer separately; an audible delay can remain.")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            if model.isCastingMacAudio {
-                Text(model.airPlayTimingMessage).font(.caption).foregroundStyle(.secondary).monospacedDigit()
-                Stepper(value: $model.airPlayTimingOffset, in: -5...5, step: 0.1) {
-                    Text("TV timing offset: \(model.airPlayTimingOffset, specifier: "%+.1f") s").font(.caption).monospacedDigit()
-                }
-                Text("Positive moves TV audio ahead; negative delays it. Apply while listening to both outputs.")
-                    .font(.caption2).foregroundStyle(.secondary)
-                Button("Align TV to speakers") { model.alignAirPlay() }
-                    .disabled(!model.canAlignAirPlay)
-                Text("Adjust TV volume using the AirPlay picker or TV remote.")
-                    .font(.caption2).foregroundStyle(.secondary)
-            }
-        }
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(model.includeAirPlay ? Palette.blue : .clear, lineWidth: 1.5))
     }
 }

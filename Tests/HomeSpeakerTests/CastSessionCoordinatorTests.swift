@@ -25,6 +25,25 @@ private final class FixtureCastClient: CastControlling {
 }
 
 final class CastSessionCoordinatorTests: XCTestCase {
+    @MainActor
+    func testDelayedAirPlayRouteStartsBothProtocolsInsideCurrentLiveWindow() async throws {
+        let client = FixtureCastClient()
+        let session = CastSessionCoordinator(clientFactory: { _ in client }, clock: { 100 })
+        defer { session.disconnectAll() }
+        session.select(speaker)
+        await report(client, status())
+        session.playMacAudio(at: stream, metadata: .macAudio, waitForCompanion: true)
+        let content = try XCTUnwrap(session.activeContentID)
+        var paused = status(content: content, state: "PAUSED", position: 0)
+        paused.supportsSeek = true; paused.liveSeekableRange = 15...45
+        await report(client, paused)
+        var companionPosition: Double?
+        session.onPrepared = { companionPosition = session.sharedStartPosition }
+        session.markCompanionReady(contentID: content, seekableRanges: [14...45])
+        XCTAssertEqual(companionPosition, 43.5)
+        XCTAssertEqual(client.seeks, [43.5], "The Cast receiver receives the same anchor as AirPlay, not expired time zero")
+        XCTAssertTrue(client.playback.isEmpty)
+    }
     private let speaker = CastDevice(id: "speaker", name: "Home speaker", model: "L09G", host: "127.0.0.1", port: 8009)
     private let tv = CastDevice(id: "tv", name: "TV", model: "Chromecast", host: "127.0.0.2", port: 8009)
     private let stream = URL(string: "http://127.0.0.1:1234/live.m3u8")!

@@ -3,7 +3,7 @@ import Foundation
 /// Cast positions describe the media timeline, not the sound leaving a device.
 /// Only seek our live media, with fresh samples and an overlapping seekable window.
 enum CastSyncPlanner {
-    static let tolerance = 0.25
+    static let tolerance = 0.08
     struct Assessment {
         var spread: Double?
         var corrections: [String: Double] = [:]

@@ -2,7 +2,7 @@ import AppKit
 import HomeCore
 import SwiftUI
 
-private enum Palette {
+enum Palette {
     static let blue = Color(red: 0.26, green: 0.46, blue: 0.88)
     static let navy = Color(red: 0.13, green: 0.21, blue: 0.35)
 }
@@ -97,7 +97,8 @@ struct ContentView: View {
 
     private var speakerSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            heading("Destinations", detail: model.selectedDevices.isEmpty ? "Select one or more" : "\(model.selectedDevices.count) selected")
+            let count = model.selectedDevices.count + (model.includeAirPlay ? 1 : 0)
+            heading("Destinations", detail: count == 0 ? "Select one or more" : "\(count) selected")
             if model.devices.isEmpty {
                 HStack(spacing: 14) {
                     Image(systemName: "wifi.exclamationmark")
@@ -113,17 +114,13 @@ struct ContentView: View {
                 }
                 .padding(18)
                 .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 18))
-            } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 155), spacing: 12)], spacing: 12) {
-                    ForEach(model.devices) { device in speakerCard(device) }
-                }
             }
-            Text(model.isCastingMacAudio ? "Stop casting to change destinations." : "Select individual speakers and Cast TVs together, or choose one Google Home group. A group replaces individual selections and handles synchronisation.")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 155), spacing: 12)], spacing: 12) {
+                ForEach(model.devices) { device in speakerCard(device) }
+                AirPlayDestinationSection(model: model, output: model.airPlay,
+                    deviceName: home.networkDevices.first { $0.capabilities.contains(.airPlay) && $0.kind == .television }.map { home.displayName(for: $0) })
+            }
             if !model.selectedDevices.isEmpty { destinationControls }
-            Button("Google Home group setup") { home.open(URL(string: "https://support.google.com/googlehome/answer/7174267?hl=en")!) }
-                .font(.caption)
-            AirPlayDestinationSection(model: model, deviceNames: home.networkDevices.filter { $0.capabilities.contains(.airPlay) }.map { home.displayName(for: $0) })
         }
     }
 
@@ -147,6 +144,7 @@ struct ContentView: View {
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
+            .frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
             .padding(16)
             .frame(maxWidth: .infinity, minHeight: 105, alignment: .leading)
             .background(selected ? Palette.blue.opacity(0.10) : Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 18))
@@ -173,14 +171,6 @@ struct ContentView: View {
                     Slider(value: Binding(get: { model.receiverStatuses[device.id]?.volume ?? 0.5 }, set: { model.setVolume($0, for: device) }), in: 0...1)
                         .disabled(!model.connectedDeviceIDs.contains(device.id))
                         .accessibilityLabel("\(home.displayName(for: device)) volume")
-                }
-            }
-            if !model.syncMessage.isEmpty {
-                Text(model.syncMessage).font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true).monospacedDigit()
-                if model.hasMultipleDestinations {
-                    Button("Align playback now") { model.alignDestinations() }.disabled(!model.canAlign)
-                        .help("Align fresh receiver positions when every device supports live seeking")
                 }
             }
         }

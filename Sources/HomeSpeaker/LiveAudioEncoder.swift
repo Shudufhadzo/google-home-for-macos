@@ -9,8 +9,12 @@ final class LiveAudioEncoder: NSObject, AVAssetWriterDelegate {
     private let format: CMAudioFormatDescription
     private let sampleRate: Int32
     private var frames: Int64 = 0
+    private var videoInput: AVAssetWriterInput?
+    private var videoAdaptor: AVAssetWriterInputPixelBufferAdaptor?
+    private var poster: CVPixelBuffer?
+    private var videoFrames: Int64 = 0
 
-    init(sampleRate: Int) throws {
+    init(sampleRate: Int, metadata: PlaybackMetadata = .macAudio, includeVideo: Bool = false) throws {
         self.sampleRate = Int32(sampleRate)
         var asbd = AudioStreamBasicDescription(mSampleRate: Double(sampleRate), mFormatID: kAudioFormatLinearPCM,
             mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
@@ -31,16 +35,37 @@ final class LiveAudioEncoder: NSObject, AVAssetWriterDelegate {
         writer.preferredOutputSegmentInterval = CMTime(seconds: 0.5, preferredTimescale: self.sampleRate)
         writer.initialSegmentStartTime = .zero
         writer.delegate = self
+        writer.metadata = metadata.assetMetadata
         guard writer.canAdd(input) else { throw Self.failure("AAC streaming is unavailable.") }
         writer.add(input)
+        if includeVideo {
+            let video = AVAssetWriterInput(mediaType: .video, outputSettings: [
+                AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: NowPlayingPoster.width,
+                AVVideoHeightKey: NowPlayingPoster.height,
+                AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: 600_000,
+                    AVVideoExpectedSourceFrameRateKey: 30, AVVideoMaxKeyFrameIntervalKey: 15,
+                    AVVideoAllowFrameReorderingKey: false, AVVideoProfileLevelKey: AVVideoProfileLevelH264MainAutoLevel]
+            ])
+            video.expectsMediaDataInRealTime = true
+            guard writer.canAdd(video) else { throw Self.failure("TV artwork video is unavailable.") }
+            writer.add(video)
+            videoInput = video
+            videoAdaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: video,
+                sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                    kCVPixelBufferWidthKey as String: NowPlayingPoster.width, kCVPixelBufferHeightKey as String: NowPlayingPoster.height])
+            poster = try NowPlayingPoster.make(metadata: metadata)
+        }
         guard writer.startWriting() else { throw writer.error ?? Self.failure("Could not start AAC encoding.") }
         writer.startSession(atSourceTime: .zero)
     }
 
     /// False means backpressure; the caller retains PCM in its bounded FIFO.
+    func updatePoster(_ poster: CVPixelBuffer) { self.poster = poster }
+
     func append(_ pcm: Data) throws -> Bool {
         guard writer.status == .writing else { throw writer.error ?? Self.failure("Audio encoder stopped.") }
         guard input.isReadyForMoreMediaData else { return false }
+        if let videoInput, !videoInput.isReadyForMoreMediaData { return false }
         guard !pcm.isEmpty, pcm.count % 4 == 0 else { return true }
         var block: CMBlockBuffer?
         var status = CMBlockBufferCreateWithMemoryBlock(allocator: kCFAllocatorDefault, memoryBlock: nil,
@@ -50,6 +75,14 @@ final class LiveAudioEncoder: NSObject, AVAssetWriterDelegate {
         status = pcm.withUnsafeBytes { CMBlockBufferReplaceDataBytes(with: $0.baseAddress!, blockBuffer: block, offsetIntoDestination: 0, dataLength: pcm.count) }
         guard status == noErr else { throw Self.failure("Could not copy audio packet (\(status)).") }
         let count = pcm.count / 4
+        if let videoAdaptor, let poster {
+            while Double(videoFrames) / 30 < Double(frames + Int64(count)) / Double(sampleRate) {
+                guard videoAdaptor.append(poster, withPresentationTime: CMTime(value: videoFrames, timescale: 30)) else {
+                    throw writer.error ?? Self.failure("TV artwork frame was rejected.")
+                }
+                videoFrames += 1
+            }
+        }
         var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: sampleRate),
             presentationTimeStamp: CMTime(value: frames, timescale: sampleRate), decodeTimeStamp: .invalid)
         var sample: CMSampleBuffer?

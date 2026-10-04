@@ -14,7 +14,9 @@ struct LiveAudioPlaylist {
         // Independent receivers need time to prepare the same beginning. The
         // larger window is still bounded, including during paused Music playback.
         windowCount = coordinatedStartup ? 64 : 6
-        retainedCount = coordinatedStartup ? 64 : 20
+        // RFC 8216 §6.2.2: after leaving the manifest, a fragment must remain
+        // downloadable for its duration plus the longest advertised playlist.
+        retainedCount = coordinatedStartup ? 129 : 20
         isCoordinatingStartup = coordinatedStartup
     }
 

@@ -110,6 +110,7 @@ final class CastClient: CastControlling {
 
     private let logger = Logger(subsystem: "za.shudu.homespeaker", category: "CastPlayback")
     private let device: CastDevice
+    private let connectionFactory: (NWEndpoint.Host, NWEndpoint.Port, NWParameters) -> NWConnection
     private let queue = DispatchQueue(label: "HomeSpeaker.CastClient")
     private var connection: NWConnection?
     private var timer: DispatchSourceTimer?
@@ -123,52 +124,80 @@ final class CastClient: CastControlling {
     private var nowPlaying = CastNowPlaying.macAudio
     private var liveAutoplay = true
     private var liveStartTime: Double?
-    init(device: CastDevice) {
+    private var recovery = CastConnectionRecovery()
+    private var recovering = false
+    private var recoveryGeneration = UUID()
+    init(device: CastDevice,
+         connectionFactory: @escaping (NWEndpoint.Host, NWEndpoint.Port, NWParameters) -> NWConnection = { NWConnection(host: $0, port: $1, using: $2) }) {
         self.device = device
+        self.connectionFactory = connectionFactory
     }
 
     func connect() {
         queue.async { [self] in
-            let tls = NWProtocolTLS.Options()
-            // Cast receivers present a local self-signed certificate.
-            // Restrict the connection to the address discovered via Bonjour.
-            sec_protocol_options_set_verify_block(tls.securityProtocolOptions, { _, _, complete in
-                complete(true)
-            }, queue)
-            let parameters = NWParameters(tls: tls)
-            let connection = NWConnection(
-                host: NWEndpoint.Host(device.host),
-                port: NWEndpoint.Port(rawValue: device.port)!,
-                using: parameters
-            )
-            self.connection = connection
-            connection.stateUpdateHandler = { [weak self] state in
-                guard let self else { return }
-                switch state {
-                case .ready:
-                    self.onProgress?("Secure Cast connection open; reading speaker status…")
-                    self.send(namespace: "urn:x-cast:com.google.cast.tp.connection", destination: "receiver-0", body: ["type": "CONNECT"])
-                    self.requestStatus()
-                    self.receive()
-                    self.startTimer()
-                case .failed(let error):
-                    self.onError?("Cast connection failed: \(error.localizedDescription)")
-                    self.disconnectOnQueue()
-                case .waiting(let error):
-                    self.onProgress?("Waiting for Cast network: \(error.localizedDescription)")
-                case .preparing:
-                    self.onProgress?("Opening a secure Cast connection…")
-                default:
-                    break
-                }
+            recovery.reset()
+            recovering = false
+            openConnection()
+        }
+    }
+
+    private func openConnection() {
+        let tls = NWProtocolTLS.Options()
+        // Cast receivers present a local self-signed certificate.
+        // Restrict the connection to the address discovered via Bonjour.
+        sec_protocol_options_set_verify_block(tls.securityProtocolOptions, { _, _, complete in complete(true) }, queue)
+        let connection = connectionFactory(NWEndpoint.Host(device.host), NWEndpoint.Port(rawValue: device.port)!, NWParameters(tls: tls))
+        self.connection = connection
+        connection.stateUpdateHandler = { [weak self, weak connection] state in
+            guard let self, let connection, self.connection === connection else { return }
+            switch state {
+            case .ready:
+                self.onProgress?(self.recovering ? "Restoring speaker controls…" : "Secure Cast connection open; reading speaker status…")
+                self.send(namespace: "urn:x-cast:com.google.cast.tp.connection", destination: "receiver-0", body: ["type": "CONNECT"])
+                self.requestStatus()
+                self.receive()
+                self.startTimer()
+            case .failed(let error):
+                self.connectionFailed("Cast connection failed: \(error.localizedDescription)")
+            case .waiting(let error):
+                self.onProgress?("Waiting for Cast network: \(error.localizedDescription)")
+            case .cancelled:
+                self.connectionFailed("Cast control connection was interrupted.")
+            case .preparing:
+                self.onProgress?("Opening a secure Cast connection…")
+            default: break
             }
-            connection.start(queue: queue)
-            queue.asyncAfter(deadline: .now() + 12) { [weak self, weak connection] in
-                guard let self, let connection, self.connection === connection else { return }
-                if case .ready = connection.state { return }
-                self.onError?("Cast connection timed out. Check the speaker's local network access.")
-                self.disconnectOnQueue()
-            }
+        }
+        connection.start(queue: queue)
+        queue.asyncAfter(deadline: .now() + (recovering ? 4 : 12)) { [weak self, weak connection] in
+            guard let self, let connection, self.connection === connection else { return }
+            if case .ready = connection.state, !self.recovering { return }
+            self.connectionFailed("Cast connection timed out. Check the speaker's local network access.")
+        }
+    }
+
+    private func connectionFailed(_ message: String) {
+        let ownsStream = !liveCancelled && pendingLiveURL == nil && requestedLiveURL != nil
+        guard let delay = recovery.retryDelay(at: ProcessInfo.processInfo.systemUptime, ownsActiveStream: ownsStream) else {
+            onError?(message)
+            disconnectOnQueue()
+            return
+        }
+        logger.warning("Cast control connection interrupted; preserving live media and retrying in \(delay) s")
+        timer?.cancel(); timer = nil
+        let old = connection
+        connection = nil
+        old?.cancel()
+        incoming.removeAll()
+        // Keep media identity/timing for reconciliation, but CONNECT again to the
+        // current app transport on the replacement socket. Do not LAUNCH/LOAD.
+        transportID = nil
+        recovering = true
+        let id = UUID()
+        recoveryGeneration = id
+        queue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, self.recoveryGeneration == id, self.recovering, !self.liveCancelled else { return }
+            self.openConnection()
         }
     }
 
@@ -280,7 +309,10 @@ final class CastClient: CastControlling {
     }
 
     private func disconnectOnQueue() {
-        let wasConnected = connection != nil
+        let wasConnected = connection != nil || recovering
+        recoveryGeneration = UUID()
+        recovering = false
+        recovery.reset()
         timer?.cancel()
         timer = nil
         connection?.cancel()
@@ -325,22 +357,23 @@ final class CastClient: CastControlling {
         guard let connection, let payload = try? JSONSerialization.data(withJSONObject: body),
               let json = String(data: payload, encoding: .utf8) else { return }
         let message = CastWire.message(namespace: namespace, destination: destination, json: json)
-        connection.send(content: message, completion: .contentProcessed { [weak self] error in
-            if let error { self?.onError?("Cast send failed: \(error.localizedDescription)") }
+        connection.send(content: message, completion: .contentProcessed { [weak self, weak connection] error in
+            guard let self, let connection, self.connection === connection else { return }
+            if let error { self.connectionFailed("Cast send failed: \(error.localizedDescription)") }
         })
     }
 
     private func receive() {
-        connection?.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, isComplete, error in
-            guard let self else { return }
+        guard let connection else { return }
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self, weak connection] data, _, isComplete, error in
+            guard let self, let connection, self.connection === connection else { return }
             if let data { self.incoming.append(data) }
             self.consumeMessages()
+            guard self.connection === connection else { return }
             if let error {
-                self.onError?("Cast connection closed: \(error.localizedDescription)")
-                self.disconnectOnQueue()
+                self.connectionFailed("Cast connection closed: \(error.localizedDescription)")
             } else if isComplete {
-                self.onError?("Cast connection closed by speaker.")
-                self.disconnectOnQueue()
+                self.connectionFailed("Cast connection closed by speaker.")
             } else {
                 self.receive()
             }
@@ -383,16 +416,18 @@ final class CastClient: CastControlling {
             let nextTransport = app?["transportId"] as? String
             if nextTransport != transportID {
                 transportID = nextTransport
-                status.title = ""
-                status.artist = ""
-                status.artworkURL = nil
-                status.isPlaying = false
-                status.mediaSessionID = nil
-                status.contentID = nil
-                status.playerState = "IDLE"
-                status.supportsNext = false
-                status.supportsPrevious = false
-                status.clearTiming()
+                if !recovering {
+                    status.title = ""
+                    status.artist = ""
+                    status.artworkURL = nil
+                    status.isPlaying = false
+                    status.mediaSessionID = nil
+                    status.contentID = nil
+                    status.playerState = "IDLE"
+                    status.supportsNext = false
+                    status.supportsPrevious = false
+                    status.clearTiming()
+                }
                 if let nextTransport {
                     send(namespace: "urn:x-cast:com.google.cast.tp.connection", destination: nextTransport, body: ["type": "CONNECT"])
                     send(namespace: "urn:x-cast:com.google.cast.media", destination: nextTransport, body: [
@@ -408,6 +443,11 @@ final class CastClient: CastControlling {
                 if let liveStartTime { load["currentTime"] = liveStartTime }
                 send(namespace: "urn:x-cast:com.google.cast.media", destination: transportID, body: load)
                 onProgress?("Sending Mac audio to the speaker…")
+            }
+            if recovering, status.receiverAppID != "CC1AD845" || transportID == nil {
+                onError?("Speaker changed playback while restoring its control connection.")
+                disconnectOnQueue()
+                return
             }
             onStatus?(status)
         } else if type == "MEDIA_STATUS" {
@@ -457,6 +497,11 @@ final class CastClient: CastControlling {
                         logger.notice("Receiver media clock rate: \(self.status.playbackRate ?? -1), player=\(self.status.playerState, privacy: .public)")
                     }
                 }
+            }
+            if recovering, let requestedLiveURL, status.contentID == requestedLiveURL.absoluteString,
+               status.mediaSessionID != nil {
+                recovering = false
+                logger.notice("Cast controls restored to the existing media session without reloading audio")
             }
             status.isPlaying = status.playerState == "PLAYING"
             stopCancelledLiveMedia()

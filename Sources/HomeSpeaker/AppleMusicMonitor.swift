@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import OSLog
 
 struct MusicTrack: Equatable {
     let id: String
@@ -22,7 +23,7 @@ final class AppleMusicMonitor {
     private var artworkID: String?
     private var artwork: Data?
     private var permissionDenied = false
-    private var preparedTrackID: String?
+    private let logger = Logger(subsystem: "za.shudu.homespeaker", category: "MusicSource")
 
     func start() {
         queue.async { [self] in
@@ -38,7 +39,6 @@ final class AppleMusicMonitor {
 
     func stop() {
         queue.async { [self] in
-            preparedTrackID = nil
             timer?.cancel()
             timer = nil
             artworkID = nil
@@ -56,39 +56,6 @@ final class AppleMusicMonitor {
                     end timeout
                 end if
                 """)
-            refresh()
-        }
-    }
-
-    /// Hold the new song at its beginning until the receiver has opened a fresh stream.
-    func prepareTransition(_ command: Command?, rewind: Bool, completion: @escaping (MusicTrack?) -> Void) {
-        queue.async { [self] in
-            guard timer != nil, !permissionDenied else { completion(nil); return }
-            let action = command?.rawValue ?? ""
-            let position = rewind ? "set player position to 0" : ""
-            guard execute("""
-                with timeout of 5 seconds
-                    tell application id "com.apple.Music"
-                        pause
-                        \(action)
-                        pause
-                        \(position)
-                    end tell
-                end timeout
-                """) != nil else { completion(nil); return }
-            let track = refresh(notify: false)
-            preparedTrackID = track?.id
-            completion(track)
-        }
-    }
-
-    func resumePreparedTrack(_ id: String) {
-        queue.async { [self] in
-            guard timer != nil, preparedTrackID == id else { return }
-            preparedTrackID = nil
-            // Recheck identity: an external skip must not resume a different track.
-            guard refresh(notify: false)?.id == id else { return }
-            _ = execute("tell application id \"com.apple.Music\" to play")
             refresh()
         }
     }
@@ -144,6 +111,7 @@ final class AppleMusicMonitor {
         let result = NSAppleScript(source: source)?.executeAndReturnError(&error)
         if let error {
             let code = error[NSAppleScript.errorNumber] as? Int ?? 0
+            if reportError { logger.error("Music scripting error \(code): \(error[NSAppleScript.errorMessage] as? String ?? "unknown", privacy: .public)") }
             if code == -1743 { permissionDenied = true }
             if reportError {
                 onError?(code == -1743

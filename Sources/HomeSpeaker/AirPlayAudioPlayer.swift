@@ -2,6 +2,8 @@ import AVFoundation
 import AVKit
 import CoreAudio
 import SwiftUI
+import OSLog
+import MediaPlayer
 
 /// Plays the same live HLS timeline as the Cast receivers through a native AirPlay route.
 /// The AVPlayer survives item replacements so the user's route selection can survive track changes.
@@ -15,6 +17,9 @@ final class AirPlayAudioPlayer: ObservableObject {
     var onUpdate: (() -> Void)?
     var onReady: (() -> Void)?
     var onError: ((String) -> Void)?
+    var onPlaybackRequest: ((Bool) -> Void)?
+    var onRouteInterrupted: (() -> Void)?
+    var onRouteRestored: (() -> Void)?
 
     @Published private(set) var state: State = .idle
     @Published private(set) var message = "Choose the TV using the AirPlay button."
@@ -52,11 +57,23 @@ final class AirPlayAudioPlayer: ObservableObject {
     private var generation = UUID()
     private var seekGeneration = UUID()
     private var wantsPlayback = false
+    private let logger = Logger(subsystem: "za.shudu.homespeaker", category: "AirPlayPlayback")
+    private var metadata: PlaybackMetadata?
+    private var remoteTargets: [(MPRemoteCommand, Any)] = []
+    private var routeRecovery: Task<Void, Never>?
 
     init() {
         player = AVPlayer()
         player.allowsExternalPlayback = true
         player.volume = 0.33
+        let commands = MPRemoteCommandCenter.shared()
+        for (command, playing) in [(commands.playCommand, true), (commands.pauseCommand, false)] {
+            let target = command.addTarget { [weak self] _ in
+                Task { @MainActor [weak self] in self?.onPlaybackRequest?(playing) }
+                return .success
+            }
+            remoteTargets.append((command, target))
+        }
         // Keep AVFoundation's buffering protection. Cross-protocol timing is only estimated.
         player.automaticallyWaitsToMinimizeStalling = true
         observations = [
@@ -70,7 +87,7 @@ final class AirPlayAudioPlayer: ObservableObject {
                 Task { @MainActor [weak self] in self?.refreshPlaybackState() }
             }
         ]
-        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] _ in
+        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.1, preferredTimescale: 600), queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self, self.currentURL != nil, self.player.currentItem != nil else { return }
                 let seconds = CMTimeGetSeconds(self.player.currentTime())
@@ -89,11 +106,13 @@ final class AirPlayAudioPlayer: ObservableObject {
         refreshRoute()
     }
 
-    func prepare(url: URL) {
+    func prepare(url: URL, metadata: PlaybackMetadata = .macAudio) {
         clearItem(keepCurrentItem: true)
+        self.metadata = metadata
         let id = generation
         currentURL = url
         let item = AVPlayerItem(url: url)
+        logger.notice("Preparing AirPlay item")
         state = .preparing
         message = "Preparing the shared audio stream for AirPlay…"
         itemObservation = item.observe(\.status, options: [.initial, .new]) { [weak self, weak item] _, _ in
@@ -126,6 +145,21 @@ final class AirPlayAudioPlayer: ObservableObject {
         onUpdate?()
     }
 
+    private func publishNowPlaying() {
+        guard let metadata, currentURL != nil, isAirPlayRouteSelected else { return }
+        var info = metadata.nowPlayingInfo
+        info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
+        info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentTime ?? 0
+        let center = MPNowPlayingInfoCenter.default()
+        center.nowPlayingInfo = info
+        center.playbackState = isPlaying ? .playing : .paused
+    }
+
+    func updateMetadata(_ metadata: PlaybackMetadata) {
+        self.metadata = metadata
+        publishNowPlaying()
+    }
+
     /// Returns false until both the item and an AirPlay route are ready; never starts on Mac speakers.
     @discardableResult
     func play(at seconds: Double? = nil) -> Bool {
@@ -139,15 +173,18 @@ final class AirPlayAudioPlayer: ObservableObject {
         }
         guard isReady else { return false }
         wantsPlayback = true
-        if let seconds, seek(at: seconds) { return true }
+        // Open the remote playback pipeline before seeking. Some AirPlay TVs
+        // never complete a live seek issued against a newly paused item.
+        player.play()
+        if let seconds { _ = seek(at: seconds) }
         // Some live receivers expose no seekable window until playback begins.
         // Let HLS's shared start hint choose the position rather than fabricate an alignment.
-        player.play()
         refreshPlaybackState()
         return true
     }
 
     func pause() {
+        logger.notice("AirPlay pause requested by source control")
         wantsPlayback = false
         seekGeneration = UUID()
         player.cancelPendingPrerolls()
@@ -163,9 +200,14 @@ final class AirPlayAudioPlayer: ObservableObject {
               let position = Self.clampedPosition(seconds, in: seekableRanges) else { return false }
         let itemID = generation, seekID = UUID()
         seekGeneration = seekID
+        logger.notice("AirPlay seeking to \(position), playback requested=\(self.wantsPlayback)")
         player.seek(to: CMTime(seconds: position, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
             Task { @MainActor [weak self] in
-                guard let self, finished, self.generation == itemID, self.seekGeneration == seekID else { return }
+                guard let self, self.generation == itemID, self.seekGeneration == seekID else { return }
+                self.logger.notice("AirPlay seek completed=\(finished), playback requested=\(self.wantsPlayback)")
+                // A live receiver can reject an exact seek while the new item's
+                // window is still opening. Continue playback; drift correction
+                // will use the subsequently reported, available timeline.
                 self.refreshRoute()
                 if self.wantsPlayback, self.isAirPlayRouteSelected { self.player.play() }
                 self.refreshPlaybackState()
@@ -179,6 +221,9 @@ final class AirPlayAudioPlayer: ObservableObject {
 
     func stop() {
         clearItem()
+        metadata = nil
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        MPNowPlayingInfoCenter.default().playbackState = .stopped
         state = .idle
         message = "AirPlay stream stopped."
         refreshRoute()
@@ -202,14 +247,29 @@ final class AirPlayAudioPlayer: ObservableObject {
         isAirPlayRouteSelected = isExternalPlaybackActive || output.isAirPlay
         routeName = output.isAirPlay ? output.name : (isExternalPlaybackActive ? "AirPlay destination" : nil)
         if wasSelected, !isAirPlayRouteSelected, wantsPlayback {
-            wantsPlayback = false
+            logger.error("AirPlay route lost; external=\(self.isExternalPlaybackActive), explicit output=\(self.player.audioOutputDeviceUniqueID ?? "default", privacy: .public)")
             seekGeneration = UUID()
             player.pause()
             state = .waitingForRoute
-            message = "AirPlay disconnected. Choose the TV again to resume."
-            onError?(message)
+            message = "AirPlay route interrupted. Waiting briefly for the TV to return…"
+            onRouteInterrupted?()
+            let id = generation
+            routeRecovery?.cancel()
+            routeRecovery = Task { [weak self] in
+                do { try await Task.sleep(nanoseconds: 5_000_000_000) } catch { return }
+                guard let self, self.generation == id, !self.isAirPlayRouteSelected else { return }
+                self.routeRecovery = nil
+                self.wantsPlayback = false
+                self.message = "AirPlay disconnected. Choose the TV again to resume."
+                self.onError?(self.message)
+            }
+        } else if isAirPlayRouteSelected, routeRecovery != nil {
+            routeRecovery?.cancel(); routeRecovery = nil
+            logger.notice("AirPlay route returned; resuming coordinated playback")
+            if wantsPlayback { onRouteRestored?() }
         }
         if wasSelected != isAirPlayRouteSelected || oldName != routeName || oldExternal != isExternalPlaybackActive {
+            logger.notice("AirPlay route selected=\(self.isAirPlayRouteSelected), external=\(self.isExternalPlaybackActive)")
             refreshPlaybackState()
             onUpdate?()
         }
@@ -230,7 +290,8 @@ final class AirPlayAudioPlayer: ObservableObject {
         if !isReady { state = .preparing }
         else if !isAirPlayRouteSelected {
             state = .waitingForRoute
-            message = "Stream ready. Choose the TV using the AirPlay button."
+            message = routeRecovery == nil ? "Stream ready. Choose the TV using the AirPlay button."
+                : "AirPlay route interrupted. Waiting briefly for the TV to return…"
         } else if wantsPlayback {
             state = player.timeControlStatus == .playing ? .playing : .buffering
             message = state == .playing ? "AirPlay is playing the shared stream. Check the TV's sound." : "AirPlay is buffering…"
@@ -238,11 +299,16 @@ final class AirPlayAudioPlayer: ObservableObject {
             state = currentTime == nil ? .ready : .paused
             message = "AirPlay route selected. Shared stream ready."
         }
+        publishNowPlaying()
         onUpdate?()
     }
 
     private func fail(_ error: String) {
         guard state != .failed else { return }
+        logger.error("AirPlay item failed: \(error, privacy: .public)")
+        if let event = player.currentItem?.errorLog()?.events.last {
+            logger.error("AirPlay error domain=\(event.errorDomain, privacy: .public), code=\(event.errorStatusCode), comment=\(event.errorComment ?? "none", privacy: .public)")
+        }
         wantsPlayback = false
         player.pause()
         state = .failed
@@ -254,6 +320,7 @@ final class AirPlayAudioPlayer: ObservableObject {
     }
 
     private func clearItem(keepCurrentItem: Bool = false) {
+        routeRecovery?.cancel(); routeRecovery = nil
         generation = UUID()
         seekGeneration = UUID()
         wantsPlayback = false
@@ -298,6 +365,8 @@ final class AirPlayAudioPlayer: ObservableObject {
     }
 
     deinit {
+        routeRecovery?.cancel()
+        for (command, target) in remoteTargets { command.removeTarget(target) }
         routePolling?.cancel()
         if let timeObserver { player.removeTimeObserver(timeObserver) }
         if let failureObserver { NotificationCenter.default.removeObserver(failureObserver) }

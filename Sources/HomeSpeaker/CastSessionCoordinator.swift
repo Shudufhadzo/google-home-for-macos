@@ -23,6 +23,8 @@ final class CastSessionCoordinator {
     private var seenLive: Set<String> = []
     private var waitsForCompanion = false
     private var companionReady = false
+    private var companionRanges: [ClosedRange<Double>]?
+    private(set) var sharedStartPosition: Double?
     private var playIssued = false
     private var confirmed = false
     private var driftSamples = 0
@@ -130,9 +132,10 @@ final class CastSessionCoordinator {
 
     /// Readiness belongs to a specific stream; delayed callbacks from a stopped
     /// AirPlay player must not release a newer Cast session.
-    func markCompanionReady(contentID: String) {
+    func markCompanionReady(contentID: String, seekableRanges: [ClosedRange<Double>]? = nil) {
         guard waitsForCompanion, !playIssued, activeContentID == contentID else { return }
         companionReady = true
+        companionRanges = seekableRanges
         startWhenPrepared()
         onUpdate?()
     }
@@ -142,6 +145,7 @@ final class CastSessionCoordinator {
         let hadStream = activeContentID != nil
         activeContentID = nil; prepared.removeAll(); playing.removeAll(); started.removeAll(); seenLive.removeAll()
         waitsForCompanion = false; companionReady = false
+        companionRanges = nil; sharedStartPosition = nil
         playIssued = false; confirmed = false; driftSamples = 0; lastSamples.removeAll()
         lastCorrection = -Double.infinity; canAlign = false; syncMessage = ""
         if hadStream { for connection in connections.values { connection.client.cancelMacAudio() } }
@@ -167,6 +171,18 @@ final class CastSessionCoordinator {
     }
     func alignNow() { updateSync(force: true); onUpdate?() }
 
+    var liveAnchor: Double? {
+        activeContentID.flatMap { CastSyncPlanner.commonLiveAnchor(statuses: liveStatuses, contentID: $0, at: clock()) }
+    }
+
+    func resumeShared(at position: Double?) {
+        guard activeContentID != nil, allConnected else { return }
+        for connection in connections.values {
+            if let position { connection.client.seekLiveAudio(to: position) }
+            else { connection.client.setPlaying(true) }
+        }
+    }
+
     private var liveStatuses: [String: CastStatus] {
         Dictionary(uniqueKeysWithValues: selectedDevices.compactMap { device in statuses[device.id].map { (device.id, $0) } })
     }
@@ -177,6 +193,13 @@ final class CastSessionCoordinator {
               prepared.count == selectedDevices.count,
               !waitsForCompanion || companionReady else { return }
         playIssued = true
+        if waitsForCompanion, let ranges = companionRanges,
+           let castAnchor = CastSyncPlanner.commonLiveAnchor(statuses: liveStatuses, contentID: contentID, at: clock()),
+           ranges.contains(where: { $0.contains(castAnchor) }) {
+            // Route selection can take longer than the live window. Begin both
+            // protocols at the same available point, rather than expired time 0.
+            sharedStartPosition = castAnchor
+        }
         if waitsForCompanion { playing.removeAll() }
         onPrepared?()
         // Preparing the companion can fail synchronously and cancel the stream.
@@ -184,7 +207,10 @@ final class CastSessionCoordinator {
         if waitsForCompanion {
             // AirPlay was prepared at the beginning of this same stream. Seeking
             // Cast receivers to the live edge here would immediately separate them.
-            for connection in connections.values { connection.client.setPlaying(true) }
+            for connection in connections.values {
+                if let sharedStartPosition { connection.client.seekLiveAudio(to: sharedStartPosition) }
+                else { connection.client.setPlaying(true) }
+            }
             syncMessage = "Cast and AirPlay share the stream. Device buffering can add audible delay."
             message = "Starting \(destinationNames) and AirPlay together…"
         } else {
@@ -261,7 +287,7 @@ final class CastSessionCoordinator {
         polling?.cancel()
         polling = Task { [weak self] in
             while !Task.isCancelled {
-                do { try await Task.sleep(nanoseconds: 1_000_000_000) } catch { return }
+                do { try await Task.sleep(nanoseconds: 500_000_000) } catch { return }
                 guard let self, self.activeContentID != nil else { return }
                 for connection in self.connections.values { connection.client.requestMediaStatus() }
                 self.updateSync(force: false); self.onUpdate?()
