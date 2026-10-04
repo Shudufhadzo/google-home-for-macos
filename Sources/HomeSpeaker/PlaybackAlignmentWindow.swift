@@ -54,4 +54,3 @@ struct PlaybackAlignmentWindow {
         corrections += 1; lastCorrection = now; stableRounds = 0
     }
 }
-
