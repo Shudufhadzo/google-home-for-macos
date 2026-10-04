@@ -13,6 +13,7 @@ final class LiveAudioEncoder: NSObject, AVAssetWriterDelegate {
     private var videoAdaptor: AVAssetWriterInputPixelBufferAdaptor?
     private var poster: CVPixelBuffer?
     private var videoFrames: Int64 = 0
+    var mediaTime: Double { Double(frames) / Double(sampleRate) }
 
     init(sampleRate: Int, metadata: PlaybackMetadata = .macAudio, includeVideo: Bool = false) throws {
         self.sampleRate = Int32(sampleRate)

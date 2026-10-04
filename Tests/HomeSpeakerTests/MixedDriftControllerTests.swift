@@ -2,6 +2,14 @@ import XCTest
 @testable import HomeSpeaker
 
 final class MixedDriftControllerTests: XCTestCase {
+    func testStartupCalibrationCannotKeepSeekingThroughoutASong() {
+        var subject = MixedDriftController()
+        var corrections = 0
+        for second in 0..<180 {
+            if update(&subject, time: 100 + Double(second), drift: -0.3) != nil { corrections += 1 }
+        }
+        XCTAssertLessThanOrEqual(corrections, 2, "Calibration must be bounded; persistent drift must not cut the rest of the song repeatedly")
+    }
     func testCastSeekBiasLearnsAnEarlierTargetWhenReceiverRemainsAhead() {
         var subject = MixedDriftController()
         XCTAssertNil(update(&subject, time: 100, drift: -0.2))
@@ -46,7 +54,11 @@ final class MixedDriftControllerTests: XCTestCase {
         XCTAssertNil(update(&subject, time: 111, drift: 0.15, target: nil))
         XCTAssertNil(update(&subject, time: 112, drift: 0.15))
         XCTAssertNil(update(&subject, time: 113, drift: 0.15))
-        XCTAssertEqual(update(&subject, time: 114, drift: 0.15), .airPlay(10))
+        XCTAssertNil(update(&subject, time: 114, drift: 0.15), "Expired startup calibration must not wake up later during music")
+        subject.reset()
+        XCTAssertNil(update(&subject, time: 115, drift: 0.15))
+        XCTAssertNil(update(&subject, time: 116, drift: 0.15))
+        XCTAssertEqual(update(&subject, time: 117, drift: 0.15), .airPlay(10))
         subject.reset()
         for index in 0..<8 { XCTAssertNil(update(&subject, time: 120 + Double(index), drift: 0.3, offset: 0.3)) }
     }

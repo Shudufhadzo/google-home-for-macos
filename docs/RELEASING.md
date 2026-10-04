@@ -14,7 +14,7 @@ It creates a universal (Apple silicon + Intel) app in `dist/HomeManager.app` and
 
 Without a signing identity, these are **ad-hoc signed development builds** with `-development` in their filenames. macOS may block downloaded copies. Build from source for development; do not disable Gatekeeper or strip quarantine as an installation step.
 
-The current GitHub preview is Home Manager 0.5.5. Its universal DMG and ZIP are signed and notarized independently of the historical Home Speaker 0.4.2 release. See [0.5.5 release notes](RELEASE-NOTES-0.5.5.md) and [release verification](VERIFICATION-0.5.5.md) for the exact checks and physical-device limits.
+The current GitHub preview is Home Manager 0.5.6. Its universal DMG and ZIP are signed and notarized independently of the historical Home Speaker 0.4.2 release. See [0.5.6 release notes](RELEASE-NOTES-0.5.6.md) and [release verification](VERIFICATION-0.5.6.md) for the exact checks and physical-device limits.
 
 ## Notarized public package
 

@@ -26,6 +26,30 @@ private final class FixtureCastClient: CastControlling {
 
 final class CastSessionCoordinatorTests: XCTestCase {
     @MainActor
+    func testMixedPlaybackDoesNotRunASecondCompetingCorrectionLoop() async throws {
+        var now = 100.0
+        var clients: [String: FixtureCastClient] = [:]
+        let session = CastSessionCoordinator(clientFactory: { device in
+            let client = FixtureCastClient(); clients[device.id] = client; return client
+        }, clock: { now })
+        defer { session.disconnectAll() }
+        session.select(speaker); session.select(tv)
+        let a = try XCTUnwrap(clients[speaker.id]), b = try XCTUnwrap(clients[tv.id])
+        await report(a, status()); await report(b, status())
+        session.playMacAudio(at: stream, metadata: .macAudio, waitForCompanion: true)
+        let content = try XCTUnwrap(session.activeContentID)
+        await report(a, status(content: content, state: "PAUSED")); await report(b, status(content: content, state: "PAUSED"))
+        session.markCompanionReady(contentID: content)
+        for second in 0..<30 {
+            now = 100 + Double(second)
+            var slow = status(content: content, state: "PLAYING", position: 10 + Double(second), sampled: now)
+            slow.supportsSeek = true; slow.liveSeekableRange = 0...100
+            var fast = slow; fast.currentTime = slow.currentTime! + 0.8
+            await report(a, slow); await report(b, fast)
+        }
+        XCTAssertTrue(a.seeks.isEmpty); XCTAssertTrue(b.seeks.isEmpty, "Mixed alignment must have one owner, rather than Cast and TV controllers fighting each other")
+    }
+    @MainActor
     func testDelayedAirPlayRouteStartsBothProtocolsInsideCurrentLiveWindow() async throws {
         let client = FixtureCastClient()
         let session = CastSessionCoordinator(clientFactory: { _ in client }, clock: { 100 })
@@ -186,6 +210,8 @@ final class CastSessionCoordinatorTests: XCTestCase {
             await report(a, slow); await report(b, fast)
             if round < 2 { XCTAssertTrue(b.seeks.isEmpty) }
         }
+        XCTAssertTrue(b.seeks.isEmpty, "Timing is monitored without automatic mid-song seeks")
+        session.alignNow()
         XCTAssertEqual(b.seeks, [12]); XCTAssertTrue(a.seeks.isEmpty)
         session.alignNow()
         XCTAssertEqual(b.seeks.count, 1, "A repeated manual click cannot bypass the correction cooldown")

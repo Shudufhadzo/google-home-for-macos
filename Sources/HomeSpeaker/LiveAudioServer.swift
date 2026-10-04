@@ -126,6 +126,16 @@ final class LiveAudioServer {
 
     func finishCoordinatedStartup() { queue.async { [self] in playlist.finishCoordinatedStartup(); tvPlaylist?.finishCoordinatedStartup() } }
 
+    /// Upper bound for the tail already captured before Music was held. Include
+    /// one FIFO's capacity and the pending packet; waiting is preferable to
+    /// cutting the last samples of a song. Called only after the source pause/stop.
+    func capturedTail(completion: @escaping (Double) -> Void) {
+        queue.async { [self] in
+            guard !stopped, let encoder else { return }
+            completion(encoder.mediaTime + Double(buffer.capacity + pendingPCM.count) / Double(sampleRate * 4))
+        }
+    }
+
     func append(_ pcm: Data) {
         guard !buffer.append(pcm) else { return }
         queue.async { [weak self] in self?.fail("Audio encoding could not keep up. Casting stopped and Mac sound was restored.") }
