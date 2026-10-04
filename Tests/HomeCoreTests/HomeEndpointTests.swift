@@ -2,6 +2,19 @@ import XCTest
 @testable import HomeCore
 
 final class HomeEndpointTests: XCTestCase {
+    func testUPnPUsesRootUDNInsteadOfEmbeddedServiceIdentity() throws {
+        let location = URL(string: "http://192.168.0.1/root.xml")!
+        let xml = "<root><device><deviceType>urn:schemas-upnp-org:device:InternetGatewayDevice:1</deviceType><friendlyName>EX511</friendlyName><UDN>uuid:ROOT-ROUTER</UDN><deviceList><device><UDN>uuid:embedded-wan</UDN></device></deviceList></device></root>"
+        let description = try XCTUnwrap(UPnPDescription.parse(Data(xml.utf8), location: location))
+        XCTAssertEqual(description.rootDeviceID, "ssdp:uuid:root-router")
+    }
+
+    func testDIALReceiverIsAMediaDevice() throws {
+        let location = URL(string: "http://192.168.0.5:7678/nservice/")!
+        let xml = "<root><device><deviceType>urn:dial-multiscreen-org:device:dialreceiver:1</deviceType><friendlyName>Samsung AU7000 50 TV</friendlyName><UDN>uuid:samsung-dial</UDN></device></root>"
+        XCTAssertEqual(try XCTUnwrap(UPnPDescription.parse(Data(xml.utf8), location: location)).kind, .television)
+    }
+
     func testLocalManagementAddressesAndRemoteHTTPS() throws {
         for address in ["http://192.168.1.1", "http://10.0.0.1:8123", "http://172.16.1.1", "http://homeassistant.local:8123", "http://[fd12::1]", "https://hub.example.com/ha"] {
             XCTAssertNoThrow(try HomeEndpointPolicy.address(address))

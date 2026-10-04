@@ -74,15 +74,18 @@ final class HomeNetworkDiscovery: NSObject {
               records[ad.id] == nil, lookups.count < 24, records.count < 128 else { return }
         let run = generation
         lookups[ad.id] = Task { [weak self, transport] in
+            defer { if self?.generation == run { self?.lookups.removeValue(forKey: ad.id) } }
             do {
                 let (data, response) = try await transport.send(URLRequest(url: ad.location, timeoutInterval: 5))
                 guard !Task.isCancelled, let self, self.generation == run, response.statusCode == 200,
                       let description = UPnPDescription.parse(data, location: ad.location) else { return }
                 // A description URL is not a configuration page. Only open an explicit presentation URL.
-                let device = HomeDevice(id: ad.id, name: description.name, kind: description.kind, source: .ssdp,
+                let rootID = description.rootDeviceID ?? ad.id
+                let device = HomeDevice(id: rootID, name: description.name, kind: description.kind, source: .ssdp,
                                         model: [description.manufacturer, description.model].filter { !$0.isEmpty }.joined(separator: " · "),
                                         host: ad.location.host, managementURL: description.presentationURL, state: "Discovered",
-                                        controlNote: description.presentationURL == nil ? "This device advertises UPnP. Add its management address or a compatible hub for controls." : "Configure this device in its own management page.")
+                                        controlNote: description.presentationURL == nil ? "This device advertises UPnP. Add its management address or a compatible hub for controls." : "Configure this device in its own management page.",
+                                        discoveryIDs: [ad.id], identityKeys: [rootID])
                 self.records[ad.id] = device; self.lookups.removeValue(forKey: ad.id); self.publish()
                 self.expirations[ad.id] = Task { [weak self] in
                     try? await Task.sleep(nanoseconds: UInt64(ad.maxAge * 1_000_000_000))
@@ -97,18 +100,7 @@ final class HomeNetworkDiscovery: NSObject {
     }
 
     private func publish() {
-        var values = Array(records.values)
-        // Replace the generic route entry with a router that actually advertises the same address.
-        let advertised = values
-        values.removeAll { candidate in
-            candidate.source == .gateway && advertised.contains {
-                $0.source != .gateway && $0.host == candidate.host && $0.kind == .router
-            }
-        }
-        // HTTP(S) advertisements often duplicate a UPnP description. Keep the richer device record.
-        let richHosts = Set(values.filter { $0.source == .ssdp || $0.kind == .bridge }.compactMap(\.host))
-        values.removeAll { $0.source == .bonjour && $0.kind == .other && $0.host.map(richHosts.contains) == true }
-        values.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        let values = HomeDeviceReconciler.reconcile(Array(records.values))
         onUpdate?(values, issue ?? (scanning ? "Discovering local devices…" : "Discovery complete. Devices appear when they advertise a supported service."), interface, scanning)
     }
 
@@ -117,21 +109,27 @@ final class HomeNetworkDiscovery: NSObject {
     private func resolved(_ service: NetService) {
         let id = key(service)
         guard services[id] === service, let hostname = service.hostName, (1...65535).contains(service.port) else { return }
-        let host = service.addresses?.compactMap { data -> String? in
+        let addresses = service.addresses?.compactMap { data -> String? in
             data.withUnsafeBytes { bytes -> String? in
                 guard data.count >= MemoryLayout<sockaddr_in>.size,
-                      let address = bytes.baseAddress?.assumingMemoryBound(to: sockaddr.self), address.pointee.sa_family == sa_family_t(AF_INET) else { return nil }
+                      let address = bytes.baseAddress?.assumingMemoryBound(to: sockaddr.self),
+                      [sa_family_t(AF_INET), sa_family_t(AF_INET6)].contains(address.pointee.sa_family) else { return nil }
+                if address.pointee.sa_family == sa_family_t(AF_INET6), data.count < MemoryLayout<sockaddr_in6>.size { return nil }
                 var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
                 let result = getnameinfo(address, socklen_t(data.count), &buffer, socklen_t(buffer.count), nil, 0, NI_NUMERICHOST)
                 return result == 0 ? String(cString: buffer) : nil
             }
-        }.first ?? hostname
+        } ?? []
+        let host = addresses.first(where: { !$0.contains(":") }) ?? addresses.first ?? hostname
         let fields = service.txtRecordData().map(NetService.dictionary(fromTXTRecord:)) ?? [:]
         func text(_ key: String) -> String? { fields[key].flatMap { String(data: $0, encoding: .utf8) } }
         let type = service.type
         var kind: HomeDeviceKind = .other
         var note = "A local service is advertised. Controls depend on the device's management page or a compatible hub."
         var url: URL?
+        var capabilities: Set<HomeDeviceCapability> = []
+        var identities: Set<String> = []
+        var deviceID = id
         if type == "_home-assistant._tcp." {
             kind = .bridge; note = "Connect Home Assistant to bring its devices and controls into your home."
             let advertised = text("internal_url").flatMap { try? HomeEndpointPolicy.address($0, localOnly: true) }
@@ -145,14 +143,23 @@ final class HomeNetworkDiscovery: NSObject {
                resolved.host == base.host { url = try? HomeEndpointPolicy.address(resolved.absoluteString, localOnly: true) }
         } else if type == "_airplay._tcp." {
             kind = .television
-            note = "AirPlay receiver discovered. Playback is available through macOS AirPlay. To play with Google Cast speakers in a synchronised group, this TV needs a group-compatible Cast receiver. AirPlay discovery does not make it a Cast destination."
+            capabilities.insert(.airPlay)
+            if let advertisedID = text("deviceid") {
+                let compact = advertisedID.lowercased().filter { $0 != ":" && $0 != "-" }
+                if compact.count == 12, compact.allSatisfy(\.isHexDigit) {
+                    deviceID = "airplay:\(compact)"; identities.insert(deviceID)
+                }
+            }
+            note = "AirPlay playback is available through macOS. The Mac can also send the same captured sound to Google Cast speakers, but AirPlay and Cast have independent buffers and do not share a synchronised playback clock."
         }
         else if type == "_hap._tcp." { kind = .accessory; note = "HomeKit accessory discovered. Pair it with a compatible HomeKit controller or Home Assistant." }
         else if type.hasPrefix("_matter") { kind = .accessory; note = "Matter service discovered. A commissioned compatible controller is required for control." }
         else if type == "_ipp._tcp." { note = "Printer discovered. Add it through macOS Printers & Scanners." }
-        let device = HomeDevice(id: id, name: service.name, kind: kind, source: .bonjour,
+        let device = HomeDevice(id: deviceID, name: service.name, kind: kind, source: .bonjour,
                                 model: text("md") ?? text("model") ?? type,
-                                host: host, managementURL: url, state: "Discovered", controlNote: note)
+                                host: host, managementURL: url, state: "Discovered", controlNote: note,
+                                discoveryIDs: [id], capabilities: capabilities, identityKeys: identities,
+                                hostAliases: Set(addresses + [hostname]))
         records[id] = device; publish()
     }
 }

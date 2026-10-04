@@ -25,7 +25,7 @@ TVs, streaming receivers and external sound systems can add audio-processing del
 
 The native inventory identified **Samsung AU7000 50 TV**, model **UA50AU7000KXXA**, after it was powered on. Its Bonjour entry reported an **AirPlay receiver**; two UPnP descriptions also appeared. The Cast list contained **Office Speaker** (Mi Smart Speaker), **Home group**, and **Home Speakers** (both Google Cast Group). The Samsung did not advertise a Cast endpoint in that scan.
 
-AirPlay/UPnP advertisements cannot join a Google Cast group by themselves. Home Manager shows the TV under **Other TVs & media devices** with this limitation. To include this TV in the same receiver-managed Cast group as the speakers, connect a **group-compatible Cast receiver to the TV**, configure it in Google Home, then include that receiver and the speakers in one group. This is a compatibility requirement; no TV account/password or network setting is changed by the app. [Samsung model support](https://www.samsung.com/africa_en/support/model/UA50AU7000KXXA/) and [Samsung AirPlay guidance](https://www.samsung.com/uk/support/tv-audio-video/what-is-screen-mirroring-and-how-do-i-use-it-with-my-samsung-tv-and-samsung-mobile-device/).
+AirPlay/UPnP advertisements cannot join a Google Cast group by themselves. Home Manager 0.5.2 can instead bridge the same captured audio to Cast and the TV’s native AirPlay receiver using the workflow below. For receiver-managed Cast synchronisation, a **group-compatible Cast receiver attached to the TV** is still a separate option. Discovery combines the Samsung’s AirPlay, DIAL and MediaRenderer advertisements into one inventory card. [Samsung model support](https://www.samsung.com/africa_en/support/model/UA50AU7000KXXA/) and [Samsung AirPlay guidance](https://www.samsung.com/uk/support/tv-audio-video/what-is-screen-mirroring-and-how-do-i-use-it-with-my-samsung-tv-and-samsung-mobile-device/).
 
 ## Independent receiver correction
 
@@ -36,3 +36,20 @@ Automatic correction requires all selected receivers to report the same current 
 The implementation follows [Google's media messages](https://developers.google.com/cast/docs/media/messages), [LoadRequestData](https://developers.google.com/cast/docs/reference/web_receiver/cast.framework.messages.LoadRequestData) and [LiveSeekableRange](https://developers.google.com/cast/docs/reference/web_receiver/cast.framework.messages.LiveSeekableRange). [PyChromecast's model mapping](https://github.com/home-assistant-libs/pychromecast/blob/master/pychromecast/const.py) was read to verify the virtual group model; its code is not copied or bundled.
 
 Automated receiver-boundary tests and two real HTTP clients verify coordination/shared media. Actual audible TV-plus-speaker alignment remains a listening acceptance check with compatible hardware; a Playing acknowledgement alone does not prove it.
+
+
+## Cast speakers and an AirPlay TV
+
+1. Keep the Mac, TV and Cast speakers on the same reachable home LAN. In this home, the verified TV network is Satoshi 5G; Office is a different subnet.
+2. In Apple Music, choose **this Mac** as the output. Direct AirPlay inside Music can bypass the PCM capture path. Home Manager will handle the TV output.
+3. In Home Manager, choose your Cast speakers or one Google Home group, then enable **Also play on an AirPlay TV**.
+4. Choose **Cast Mac audio**. Use the native AirPlay button in Home Manager to choose the Samsung TV. macOS handles discovery/pairing. A discovered device is not treated as an active route.
+5. Home Manager loads the same unlisted live AAC/HLS URL into its native AVPlayer and the Cast receiver(s). Cast remains paused until the AirPlay item, AirPlay route, and every Cast receiver are ready. They then start at normal speed. The original source stays muted locally; Home Manager’s own AirPlay playback is excluded from system capture to prevent feedback.
+6. Listen to both outputs. **Align TV to speakers** is available only when every selected Cast receiver reports a fresh 1× position for this stream, AirPlay reports fresh playback timing, and the target is inside its live seek window. A positive **TV timing offset** advances TV audio; a negative offset delays it. This adjusts the media timeline without changing playback speed.
+7. Use the native AirPlay picker or TV remote for TV volume. **Stop casting** stops both owned playback paths and restores source playback. A detected AirPlay route loss or stream error also stops the shared cast.
+
+This is one shared audio source across two playback protocols. AirPlay and Cast maintain independent output buffers and clocks. Reported media positions do not measure TV DSP, external sound-system delay, or sound travelling through a room. Manual alignment can help, but this feature does not promise sample-accurate or echo-free synchronisation. The app does not measure acoustic delay automatically. Video casting is outside this audio-streaming feature.
+
+Mixed **All Mac audio** requires macOS 26 for persistent bundle-based exclusion of Home Manager’s player. Earlier supported macOS versions can use **Apple Music** capture. Protected source material may not be capturable; a playing UI alone is not evidence of audible output.
+
+The implementation uses Apple’s public [AVRoutePickerView player binding](https://developer.apple.com/documentation/avkit/avroutepickerview/player), [AVPlayer AirPlay support](https://developer.apple.com/documentation/avfoundation/supporting-airplay-in-your-app), and [Core Audio tap mute behavior](https://developer.apple.com/documentation/coreaudio/catapmutebehavior), together with the existing [Cast media protocol](https://developers.google.com/cast/docs/media/messages).

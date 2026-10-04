@@ -25,6 +25,7 @@ final class SpeakerModel: NSObject, ObservableObject {
     @Published private(set) var isCastingMacAudio = false
     @Published private(set) var isChangingTrack = false
     @Published private(set) var audioCaptureStarted = false
+    @Published private(set) var audioSignalDetected = false
     @Published private(set) var isRestoringAudio = false
     @Published private(set) var volume = 0.5
     @Published private(set) var message = "Ready to scan."
@@ -32,11 +33,20 @@ final class SpeakerModel: NSObject, ObservableObject {
     @Published private(set) var audioQuality = ""
     @Published private(set) var musicTrack: MusicTrack?
     @Published var castSource: CastAudioSource = .system
+    @Published var includeAirPlay = false
+    @Published var airPlayTimingOffset = 0.0 {
+        didSet { updateAirPlayTiming() }
+    }
+    @Published private(set) var airPlayTimingMessage = ""
     @Published private var receiverStatus = CastStatus()
+    let airPlay = AirPlayAudioPlayer()
 
     var selectedDevice: CastDevice? { selectedDevices.first }
-    var destinationNames: String { selectedDevices.map(\.name).joined(separator: ", ") }
+    var destinationNames: String {
+        (selectedDevices.map(\.name) + (includeAirPlay ? [airPlay.routeName ?? "AirPlay TV"] : [])).joined(separator: ", ")
+    }
     var hasMultipleDestinations: Bool { selectedDevices.count > 1 }
+    private var needsCoordinatedStart: Bool { hasMultipleDestinations || includeAirPlay }
 
     func destinationState(_ device: CastDevice) -> String {
         if let error = deviceErrors[device.id] { return error }
@@ -78,11 +88,13 @@ final class SpeakerModel: NSObject, ObservableObject {
     private var castingID: UUID?
     private var liveURL: URL?
     private var castPlaybackConfirmed = false
+    private var castReceiversConfirmed = false
     private var publishedTrackID: String?
     private var appliedMusicPlayback: Bool?
     private var audioStreamID = UUID()
     private var playbackAttemptID = UUID()
     private var resumeWhenPrepared: String?
+    private var expectedMusicResumeID: String?
     private var castSampleRate = 48_000
     private let audioRelay = PCMStreamRelay()
 
@@ -91,17 +103,34 @@ final class SpeakerModel: NSObject, ObservableObject {
         sessions.onUpdate = { [weak self] in self?.updateDestinations() }
         sessions.onPrepared = { [weak self] in
             guard let self else { return }
+            if self.includeAirPlay, !self.airPlay.play(at: 0) {
+                self.stopMacAudio(); self.message = "Choose an AirPlay output in Home Manager, then try again."; return
+            }
             self.audioServer?.finishCoordinatedStartup()
             if let id = self.resumeWhenPrepared { self.resumeWhenPrepared = nil; self.musicMonitor?.resumePreparedTrack(id) }
         }
         sessions.onPlaybackConfirmed = { [weak self] in
             guard let self, self.isCastingMacAudio else { return }
-            self.castPlaybackConfirmed = true; self.isChangingTrack = false
-            self.audioServer?.finishCoordinatedStartup()
-            self.message = "Casting \(self.castSource.rawValue) to \(self.destinationNames). Local playback is muted."
+            self.castReceiversConfirmed = true
+            self.confirmSharedPlaybackIfReady()
         }
         sessions.onFailure = { [weak self] error in
             guard let self else { return }; self.stopMacAudio(); self.message = error
+        }
+        airPlay.onUpdate = { [weak self] in
+            guard let self else { return }
+            self.objectWillChange.send()
+            self.updateAirPlayTiming()
+            guard self.isCastingMacAudio, self.includeAirPlay, let url = self.liveURL,
+                  self.airPlay.currentURL == url else { return }
+            if self.airPlay.isReady, self.airPlay.isAirPlayRouteSelected {
+                self.sessions.markCompanionReady(contentID: url.absoluteString)
+            }
+            self.confirmSharedPlaybackIfReady()
+        }
+        airPlay.onError = { [weak self] error in
+            guard let self, self.includeAirPlay, self.isCastingMacAudio else { return }
+            self.stopMacAudio(); self.message = error
         }
     }
 
@@ -112,8 +141,26 @@ final class SpeakerModel: NSObject, ObservableObject {
         let levels = selectedDevices.compactMap { sessions.statuses[$0.id]?.volume }
         if !levels.isEmpty { volume = levels.reduce(0, +) / Double(levels.count) }
         syncMessage = sessions.syncMessage; canAlign = sessions.canAlign
+        updateAirPlayTiming()
         // Capture preparation/restoration messages have their own lifecycle.
-        if !isCastingMacAudio && !isRestoringAudio || sessions.activeContentID != nil { message = sessions.message }
+        if !isCastingMacAudio && !isRestoringAudio || sessions.activeContentID != nil {
+            message = includeAirPlay && isCastingMacAudio && castReceiversConfirmed && !castPlaybackConfirmed
+                ? "Speakers are ready; waiting for AirPlay playback on the TV…" : sessions.message
+        }
+    }
+
+    private func confirmSharedPlaybackIfReady() {
+        guard isCastingMacAudio, castReceiversConfirmed, !castPlaybackConfirmed,
+              expectedMusicResumeID == nil,
+              !includeAirPlay || (airPlay.currentURL == liveURL && airPlay.isPlaying) else { return }
+        castPlaybackConfirmed = true; isChangingTrack = false
+        audioServer?.finishCoordinatedStartup()
+        // The startup barrier already sent PLAY to these receivers. A second
+        // PLAY would seek multiple Cast receivers to the live edge while the
+        // AirPlay item continues from the shared origin.
+        if includeAirPlay, musicTrack?.isPlaying == true { appliedMusicPlayback = true }
+        message = "Casting \(castSource.rawValue) to \(destinationNames). Local playback is muted."
+        synchronizeMusicPlayback()
     }
 
     func start() {
@@ -161,6 +208,36 @@ final class SpeakerModel: NSObject, ObservableObject {
     }
     func alignDestinations() { sessions.alignNow() }
 
+    private var airPlayAssessment: MixedPlaybackTiming.Assessment? {
+        guard includeAirPlay, isCastingMacAudio, let liveURL,
+              airPlay.currentURL == liveURL,
+              selectedDevices.count == receiverStatuses.count else { return nil }
+        return MixedPlaybackTiming.assess(statuses: receiverStatuses, contentID: liveURL.absoluteString,
+                                          now: ProcessInfo.processInfo.systemUptime,
+                                          airPlayPosition: airPlay.currentTime, airPlaySampledAt: airPlay.sampledAt,
+                                          airPlayPlaying: airPlay.isPlaying, seekableRanges: airPlay.seekableRanges,
+                                          offset: airPlayTimingOffset)
+    }
+
+    var canAlignAirPlay: Bool { airPlayAssessment?.target != nil }
+
+    func alignAirPlay() {
+        guard let target = airPlayAssessment?.target, airPlay.seek(to: target) else {
+            airPlayTimingMessage = "Wait for fresh playback timing and an available live seek window."; return
+        }
+        airPlayTimingMessage = "TV timeline adjusted. Listen to both outputs; device sound processing can add delay."
+    }
+
+    private func updateAirPlayTiming() {
+        guard includeAirPlay else { airPlayTimingMessage = ""; return }
+        guard let assessment = airPlayAssessment else {
+            airPlayTimingMessage = "Waiting for timing from the TV and all Cast destinations."; return
+        }
+        if let difference = assessment.difference {
+            airPlayTimingMessage = "Reported TV timeline: \(String(format: "%+.2f", difference)) s relative to speakers. \(assessment.note)"
+        } else { airPlayTimingMessage = assessment.note }
+    }
+
     func togglePlayback() {
         if isCastingMacAudio { musicMonitor?.command(.playPause) }
         else if canControlPlayback { sessions.setPlaying(!isPlaying) }
@@ -192,6 +269,11 @@ final class SpeakerModel: NSObject, ObservableObject {
 
     func startMacAudio() {
         guard !isCastingMacAudio, !isRestoringAudio else { return }
+        if includeAirPlay, castSource == .system {
+            guard #available(macOS 26.0, *) else {
+                message = "Choose Apple Music for combined AirPlay and Cast on this macOS version."; return
+            }
+        }
         guard isConnected else {
             message = "Connect every selected destination before sending Mac audio."
             return
@@ -201,10 +283,18 @@ final class SpeakerModel: NSObject, ObservableObject {
         playbackAttemptID = UUID()
         isCastingMacAudio = true
         castPlaybackConfirmed = false
+        castReceiversConfirmed = false
         musicTrack = nil
         musicMessage = ""
         let source = castSource
         let tap = SystemAudioTap()
+        audioSignalDetected = false
+        tap.onSignal = { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.castingID == id else { return }
+                self.audioSignalDetected = true
+            }
+        }
         audioTap = tap
         message = "Preparing audio. Allow System Audio Recording if macOS asks…"
         Task { @MainActor [self] in
@@ -217,12 +307,22 @@ final class SpeakerModel: NSObject, ObservableObject {
                 guard castingID == id else { tap.stop(); return }
                 audioCaptureStarted = true
                 try openAudioStream(track: nil, resumeMusic: false)
+                guard source == .appleMusic else {
+                    message = "Waiting for selected destinations. Local playback is muted."
+                    return
+                }
                 let monitor = AppleMusicMonitor()
                 monitor.onTrack = { [weak self] track in
                     Task { @MainActor [weak self] in
                         guard let self, self.castingID == id else { return }
+                        if let track, track.id == self.expectedMusicResumeID, track.isPlaying {
+                            self.expectedMusicResumeID = nil
+                        }
                         guard !self.isChangingTrack else {
-                            if track?.id == self.publishedTrackID { self.musicTrack = track }
+                            if track?.id == self.publishedTrackID {
+                                self.musicTrack = track
+                                self.confirmSharedPlaybackIfReady()
+                            }
                             return
                         }
                         if let track, track.id != self.publishedTrackID {
@@ -260,6 +360,7 @@ final class SpeakerModel: NSObject, ObservableObject {
         audioRelay.route(to: nil)
         isCastingMacAudio = false
         audioCaptureStarted = false
+        audioSignalDetected = false
         isRestoringAudio = true
         audioTap?.stop { [weak self] in
             Task { @MainActor [weak self] in
@@ -278,11 +379,15 @@ final class SpeakerModel: NSObject, ObservableObject {
         musicTrack = nil
         publishedTrackID = nil
         appliedMusicPlayback = nil
+        airPlay.stop()
+        airPlayTimingMessage = ""
         musicMessage = ""
         audioQuality = ""
         liveURL = nil
         castPlaybackConfirmed = false
+        castReceiversConfirmed = false
         resumeWhenPrepared = nil
+        expectedMusicResumeID = nil
         sessions.cancelMacAudio(); updateDestinations()
         message = "Stopping capture…"
     }
@@ -291,21 +396,41 @@ final class SpeakerModel: NSObject, ObservableObject {
         guard isCastingMacAudio, castSource == .appleMusic, castPlaybackConfirmed,
               !isChangingTrack, let track = musicTrack,
               appliedMusicPlayback != track.isPlaying else { return }
+        if includeAirPlay, track.isPlaying, appliedMusicPlayback == false {
+            airPlay.refreshRoute()
+            guard airPlay.isAirPlayRouteSelected else {
+                stopMacAudio(); message = "AirPlay disconnected while paused. Select the TV and start casting again."; return
+            }
+            // The live timeline advances during pauses. Reprepare both protocols
+            // together at a fresh origin rather than resume different buffered times.
+            changeMusicTrack(nil, observedTrack: track, rewindOverride: false)
+            return
+        }
         appliedMusicPlayback = track.isPlaying
         // The HLS timeline keeps advancing with silence while Music is paused.
         // Resume the existing session instead of loading a new player and waiting
         // for its startup buffer again.
+        if includeAirPlay {
+            if track.isPlaying {
+                guard airPlay.play() else {
+                    stopMacAudio(); message = "The AirPlay output could not resume. Select the TV and try again."; return
+                }
+            }
+            else { airPlay.pause() }
+        }
         sessions.setPlaying(track.isPlaying)
         message = track.isPlaying ? "Casting Apple Music. Local playback is muted."
                                   : "Apple Music and all destinations are paused."
     }
 
-    private func changeMusicTrack(_ command: AppleMusicMonitor.Command?, observedTrack: MusicTrack? = nil) {
+    private func changeMusicTrack(_ command: AppleMusicMonitor.Command?, observedTrack: MusicTrack? = nil, rewindOverride: Bool? = nil) {
         guard isCastingMacAudio, !isChangingTrack, let monitor = musicMonitor else { return }
         let resumeMusic = command != nil || (observedTrack ?? musicTrack)?.isPlaying == true
-        let rewind = command != nil || publishedTrackID != nil
+        let rewind = rewindOverride ?? (command != nil || publishedTrackID != nil)
         isChangingTrack = true
         castPlaybackConfirmed = false
+        castReceiversConfirmed = false
+        expectedMusicResumeID = nil
         audioStreamID = UUID()
         let transition = audioStreamID
         liveURL = nil
@@ -313,6 +438,7 @@ final class SpeakerModel: NSObject, ObservableObject {
         audioServer?.stop()
         audioServer = nil
         sessions.cancelMacAudio()
+        airPlay.suspendForReplacement()
         message = "Changing song. Clearing every destination's buffered audio…"
         monitor.prepareTransition(command, rewind: rewind) { [weak self] track in
             Task { @MainActor [weak self] in
@@ -333,10 +459,15 @@ final class SpeakerModel: NSObject, ObservableObject {
         let streamID = UUID()
         audioStreamID = streamID
         castPlaybackConfirmed = false
+        castReceiversConfirmed = false
         publishedTrackID = track?.id
         appliedMusicPlayback = nil
-        resumeWhenPrepared = hasMultipleDestinations && resumeMusic ? track?.id : nil
-        let server = LiveAudioServer(sampleRate: castSampleRate, coordinatedStartup: hasMultipleDestinations)
+        resumeWhenPrepared = needsCoordinatedStart && resumeMusic ? track?.id : nil
+        // Ignore the prepared song's paused snapshot until Music acknowledges
+        // the requested resume; otherwise confirmation could pause both outputs
+        // again before the asynchronous Music command has completed.
+        expectedMusicResumeID = includeAirPlay && resumeMusic ? track?.id : nil
+        let server = LiveAudioServer(sampleRate: castSampleRate, coordinatedStartup: needsCoordinatedStart)
         audioServer = server
         audioRelay.route { [weak server] in server?.append($0) }
         server.onReady = { [weak self, weak server] url in
@@ -354,10 +485,15 @@ final class SpeakerModel: NSObject, ObservableObject {
                                               album: track.album, artworkURL: artworkURL)
                 }
                 self.liveURL = metadata.streamURL(at: url)
-                guard self.sessions.playMacAudio(at: url, metadata: metadata) else {
+                guard self.sessions.playMacAudio(at: url, metadata: metadata, waitForCompanion: self.includeAirPlay) else {
                     self.stopMacAudio(); self.message = "A destination disconnected before playback. Reconnect and try again."; return
                 }
-                self.message = resumeMusic ? "Preparing all destinations for the new song…" : "Starting Mac audio…"
+                if self.includeAirPlay {
+                    self.airPlay.prepare(url: metadata.streamURL(at: url))
+                    self.message = "Choose your TV using the AirPlay button in Home Manager. Both outputs wait until it is ready."
+                } else {
+                    self.message = resumeMusic ? "Preparing all destinations for the new song…" : "Starting Mac audio…"
+                }
             }
         }
         server.onReceiver = { [weak self] in
@@ -375,7 +511,7 @@ final class SpeakerModel: NSObject, ObservableObject {
         }
         try server.start()
         // Start at the beginning of a fresh segmented timeline, preserving the song intro.
-        if resumeMusic, !hasMultipleDestinations, let track { musicMonitor?.resumePreparedTrack(track.id) }
+        if resumeMusic, !needsCoordinatedStart, let track { musicMonitor?.resumePreparedTrack(track.id) }
         watchPlaybackStartup()
     }
 
@@ -383,7 +519,9 @@ final class SpeakerModel: NSObject, ObservableObject {
         let attempt = UUID()
         playbackAttemptID = attempt
         Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 25_000_000_000)
+            // Leave time to choose the TV in Apple's native route picker.
+            let seconds: UInt64 = self?.includeAirPlay == true ? 90 : 25
+            try? await Task.sleep(nanoseconds: seconds * 1_000_000_000)
             guard let self, self.isCastingMacAudio, self.playbackAttemptID == attempt, !self.castPlaybackConfirmed else { return }
             self.stopMacAudio()
             self.message = "Not every destination started playback. Casting stopped. Check Wi-Fi and try again."

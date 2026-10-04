@@ -8,11 +8,13 @@ This is an independent project, not an official Google Home application. Compati
 
 [![macOS build and tests](https://github.com/Shudufhadzo/google-home-for-macos/actions/workflows/ci.yml/badge.svg)](https://github.com/Shudufhadzo/google-home-for-macos/actions/workflows/ci.yml)
 
-## Current development: Home Manager 0.5.1
+## Current development: Home Manager 0.5.2
 
 The whole-home expansion is **unreleased source and a local development build**. It includes:
 
 - **Your home, Favourites, and Rooms:** searchable entries with persistent local room/favourite assignments.
+- **Unified discovery:** advertisements from the same TV or router are reconciled into one card, retaining AirPlay, UPnP, management links, and saved room/favourite aliases. Distinct Google Home groups and hub entities remain separate.
+- **Cast + AirPlay:** include an AirPlay TV using the native route picker inside Home Manager. One captured HLS stream feeds Cast and the AirPlay player; a preparation barrier waits for both outputs. Reported timeline alignment and a manual TV offset help with independent buffering, but do not guarantee acoustic synchronisation.
 - **Music & speakers:** select up to eight individual Cast receivers together, or one Google Home group. One capture and AAC stream feed every destination, with a coordinated start, individual/master volume, reported timeline monitoring, and capability-gated drift correction.
 - **Network:** Bonjour and IPv4 SSDP discovery, the gateway reported by macOS, and saved management addresses for routers, extenders, and other devices. Saved addresses are labelled as saved; discovery is not treated as proof of device control.
 - **Home Assistant:** authenticated REST connection, live state/service reads, 10-second polling, and capability-aware controls. Tokens use macOS Keychain. A failed refresh retains last-known state and disables commands until connectivity returns.
@@ -91,7 +93,7 @@ The speaker may take a few seconds to start. The connection adds latency, so it 
 
 The interface adapts to the current window size. Smaller windows use one column; wide windows and full screen place speakers and casting controls beside an expanded Now Playing panel. Artwork and the playback panel grow with the available space.
 
-Checked destination cards play together. The sliders under each selected destination control its volume; the slider under Now Playing controls all selected volumes. Independent sessions display an **estimated receiver spread**, not measured acoustic delay. Automatic alignment requires fresh timing reports and live-seek support from every receiver. Use a Google Home group for the protocol's own synchronisation and adjust group delay for a TV if needed. AirPlay/UPnP TVs appear under **Other TVs & media devices** with their compatibility limits. Home Manager does not change the Mac's default sound output. If you want Bluetooth instead of Cast, pair and select that output through macOS System Settings → Sound.
+Checked destination cards play together. The sliders under each selected destination control its volume; the slider under Now Playing controls all selected volumes. Independent sessions display an **estimated receiver spread**, not measured acoustic delay. Automatic alignment requires fresh timing reports and live-seek support from every receiver. Use a Google Home group for the protocol's own synchronisation and adjust group delay for a TV if needed. AirPlay TVs can join the same audio stream through **Also play on an AirPlay TV**. Choose the TV in Home Manager’s native AirPlay picker after starting capture. Use this Mac as Music’s output; Home Manager supplies the AirPlay output itself. UPnP-only TVs retain their compatibility limits. See the [mixed playback guide](docs/MULTI-DEVICE-CASTING.md#cast-speakers-and-an-airplay-tv). Home Manager does not change the Mac's default sound output. If you want Bluetooth instead of Cast, pair and select that output through macOS System Settings → Sound.
 
 ## Shared playback from other devices
 

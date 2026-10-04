@@ -60,6 +60,40 @@ private actor ModelFixtureHub: HomeAssistantConnecting {
 
 final class HomeModelTests: XCTestCase {
     @MainActor
+    func testRoomAndFavoriteOnOldTVServiceSurviveReconciliationExpiryAndReload() throws {
+        let store = MemoryHomeSettings(), vault = MemoryHomeCredentials()
+        let oldID = "bonjour:Samsung TV|_airplay._tcp.|local."
+        store.settings.annotations[oldID] = DeviceAnnotation(room: "Lounge", isFavorite: true)
+        let airPlay = HomeDevice(id: "airplay:tv", name: "Samsung TV", kind: .television, source: .bonjour, host: "192.168.0.5", state: "Discovered", controlNote: "", discoveryIDs: [oldID], capabilities: [.airPlay])
+        let upnp = HomeDevice(id: "ssdp:uuid:tv", name: "Samsung TV", kind: .television, source: .ssdp, host: "192.168.0.5", state: "Discovered", controlNote: "")
+        let home = HomeModel(persistence: store, credentials: vault)
+        home.acceptNetworkDevices([upnp, airPlay])
+        let tv = try XCTUnwrap(home.devices(cast: []).first)
+        XCTAssertEqual(home.devices(cast: []).count, 1)
+        XCTAssertEqual(home.annotation(tv.id), .init(room: "Lounge", isFavorite: true))
+        home.acceptNetworkDevices([upnp])
+        XCTAssertEqual(home.annotation(upnp.id), .init(room: "Lounge", isFavorite: true))
+        home.saveAnnotation(upnp.id, room: "Living room", favorite: false)
+        let reloaded = HomeModel(persistence: store, credentials: vault)
+        reloaded.acceptNetworkDevices([airPlay])
+        XCTAssertEqual(reloaded.annotation(airPlay.id), .init(room: "Living room", isFavorite: false))
+        XCTAssertEqual(reloaded.annotation(oldID), .init(room: "Living room", isFavorite: false))
+    }
+
+    @MainActor
+    func testCastGroupOnSameHostRemainsSelectableAlongsidePhysicalDevice() {
+        let home = HomeModel(persistence: MemoryHomeSettings(), credentials: MemoryHomeCredentials())
+        let airPlay = HomeDevice(id: "airplay:tv", name: "TV", kind: .television, source: .bonjour, host: "192.168.0.5", state: "Discovered", controlNote: "", capabilities: [.airPlay])
+        home.acceptNetworkDevices([airPlay])
+        let cast = CastDevice(id: "tv", name: "TV", model: "Chromecast", host: "192.168.0.5", port: 8009)
+        let group = CastDevice(id: "Google-Cast-Group-house", name: "TV", model: "Google Cast Group", host: "192.168.0.5", port: 32100)
+        let result = home.devices(cast: [cast, group])
+        XCTAssertEqual(result.count, 2)
+        XCTAssertTrue(result.contains { $0.id == "cast:tv" && $0.capabilities.contains(.airPlay) })
+        XCTAssertTrue(result.contains { $0.id == "cast:Google-Cast-Group-house" && $0.capabilities.contains(.castGroup) })
+    }
+
+    @MainActor
     func testStartupKeychainLookupDoesNotBlockTheUIThread() async throws {
         let store = MemoryHomeSettings()
         store.settings.bridge = HomeBridgeConfiguration(id: UUID(), url: URL(string: "http://127.0.0.1:8123")!)

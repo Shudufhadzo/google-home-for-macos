@@ -21,6 +21,8 @@ final class CastSessionCoordinator {
     private var playing: Set<String> = []
     private var started: Set<String> = []
     private var seenLive: Set<String> = []
+    private var waitsForCompanion = false
+    private var companionReady = false
     private var playIssued = false
     private var confirmed = false
     private var driftSamples = 0
@@ -109,24 +111,37 @@ final class CastSessionCoordinator {
     }
 
     @discardableResult
-    func playMacAudio(at url: URL, metadata: CastNowPlaying) -> Bool {
+    func playMacAudio(at url: URL, metadata: CastNowPlaying, waitForCompanion: Bool = false) -> Bool {
         guard allConnected else { message = "Wait for every selected destination to connect."; onUpdate?(); return false }
         cancelMacAudio()
         activeContentID = metadata.streamURL(at: url).absoluteString
+        waitsForCompanion = waitForCompanion
         let multiple = selectedDevices.count > 1
+        let coordinated = multiple || waitForCompanion
         syncMessage = isGroup ? "Google Home group handles synchronisation. Adjust group delay in Google Home if needed."
                              : multiple ? "Preparing all destinations at normal speed…" : ""
+        if waitForCompanion { syncMessage = "Waiting for Cast and AirPlay to prepare the shared stream…" }
         message = "Preparing \(destinationNames)…"
         for device in selectedDevices {
-            connections[device.id]?.client.playMacAudio(at: url, metadata: metadata, autoplay: !multiple, currentTime: multiple ? 0 : nil)
+            connections[device.id]?.client.playMacAudio(at: url, metadata: metadata, autoplay: !coordinated, currentTime: coordinated ? 0 : nil)
         }
         startPolling(); onUpdate?(); return true
+    }
+
+    /// Readiness belongs to a specific stream; delayed callbacks from a stopped
+    /// AirPlay player must not release a newer Cast session.
+    func markCompanionReady(contentID: String) {
+        guard waitsForCompanion, !playIssued, activeContentID == contentID else { return }
+        companionReady = true
+        startWhenPrepared()
+        onUpdate?()
     }
 
     func cancelMacAudio() {
         polling?.cancel(); polling = nil
         let hadStream = activeContentID != nil
         activeContentID = nil; prepared.removeAll(); playing.removeAll(); started.removeAll(); seenLive.removeAll()
+        waitsForCompanion = false; companionReady = false
         playIssued = false; confirmed = false; driftSamples = 0; lastSamples.removeAll()
         lastCorrection = -Double.infinity; canAlign = false; syncMessage = ""
         if hadStream { for connection in connections.values { connection.client.cancelMacAudio() } }
@@ -134,6 +149,7 @@ final class CastSessionCoordinator {
 
     func setPlaying(_ value: Bool) {
         guard allConnected else { return }
+        guard !value || !waitsForCompanion || playIssued else { return }
         driftSamples = 0; lastSamples.removeAll()
         if value, let contentID = activeContentID, selectedDevices.count > 1,
            let anchor = CastSyncPlanner.commonLiveAnchor(statuses: liveStatuses, contentID: contentID, at: clock()) {
@@ -155,12 +171,35 @@ final class CastSessionCoordinator {
         Dictionary(uniqueKeysWithValues: selectedDevices.compactMap { device in statuses[device.id].map { (device.id, $0) } })
     }
 
+    private func startWhenPrepared() {
+        guard let contentID = activeContentID, !playIssued,
+              selectedDevices.count > 1 || waitsForCompanion,
+              prepared.count == selectedDevices.count,
+              !waitsForCompanion || companionReady else { return }
+        playIssued = true
+        if waitsForCompanion { playing.removeAll() }
+        onPrepared?()
+        // Preparing the companion can fail synchronously and cancel the stream.
+        guard activeContentID == contentID, playIssued else { return }
+        if waitsForCompanion {
+            // AirPlay was prepared at the beginning of this same stream. Seeking
+            // Cast receivers to the live edge here would immediately separate them.
+            for connection in connections.values { connection.client.setPlaying(true) }
+            syncMessage = "Cast and AirPlay share the stream. Device buffering can add audible delay."
+            message = "Starting \(destinationNames) and AirPlay together…"
+        } else {
+            setPlaying(true)
+            message = "Starting all \(selectedDevices.count) destinations together…"
+        }
+    }
+
     private func receive(_ status: CastStatus, from device: CastDevice) {
         statuses[device.id] = status; connected.insert(device.id); errors.removeValue(forKey: device.id)
         guard let contentID = activeContentID else {
             message = allConnected ? "Connected to \(destinationNames)." : "Connecting selected destinations…"; onUpdate?(); return
         }
         if status.contentID == contentID, status.mediaSessionID != nil {
+            let playbackWasIssued = playIssued
             if status.playerState == "PAUSED" || status.playerState == "PLAYING" { seenLive.insert(device.id) }
             // The media clock can be stopped (rate 0) in any player state,
             // including the transition from Buffering to Playing. That is not
@@ -170,20 +209,24 @@ final class CastSessionCoordinator {
             }
             if status.playerState == "PAUSED" || status.playerState == "PLAYING" { prepared.insert(device.id) }
             else { prepared.remove(device.id) }
-            if selectedDevices.count > 1, !playIssued {
-                if prepared.count == selectedDevices.count {
-                    playIssued = true
-                    onPrepared?()
-                    setPlaying(true)
-                    message = "Starting all \(selectedDevices.count) destinations together…"
-                } else if status.playerState == "PLAYING" {
+            if selectedDevices.count > 1 || waitsForCompanion, !playIssued {
+                startWhenPrepared()
+                guard activeContentID == contentID else { return }
+                if !playIssued, status.playerState == "PLAYING" {
                     guard status.supportsPause else {
-                        failed(device, message: "Receiver cannot pause for a coordinated start. Use a Google Home group."); return
+                        let reason = waitsForCompanion
+                            ? "Receiver cannot pause while AirPlay prepares. Reconnect this destination and try again."
+                            : "Receiver cannot pause for a coordinated start. Use a Google Home group."
+                        failed(device, message: reason); return
                     }
                     connections[device.id]?.client.setPlaying(false)
                 }
             }
-            if status.playerState == "PLAYING" { playing.insert(device.id); started.insert(device.id) } else { playing.remove(device.id) }
+            // Early autoplay (including the report that releases the barrier)
+            // predates our PLAY command and cannot confirm mixed playback.
+            if status.playerState == "PLAYING", !waitsForCompanion || playbackWasIssued {
+                playing.insert(device.id); started.insert(device.id)
+            } else { playing.remove(device.id) }
             if playing.count == selectedDevices.count, !confirmed {
                 confirmed = true; onPlaybackConfirmed?()
                 message = "Casting to \(destinationNames). Local playback is muted."
@@ -228,6 +271,7 @@ final class CastSessionCoordinator {
 
     private func updateSync(force: Bool) {
         guard let contentID = activeContentID, selectedDevices.count > 1 else { return }
+        guard !waitsForCompanion || playIssued else { return }
         let assessment = CastSyncPlanner.assess(statuses: liveStatuses, contentID: contentID, at: clock())
         canAlign = !assessment.corrections.isEmpty && clock() - lastCorrection >= 8
         guard let spread = assessment.spread else {

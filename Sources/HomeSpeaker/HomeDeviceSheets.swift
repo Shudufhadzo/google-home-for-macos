@@ -108,7 +108,7 @@ struct HomeDeviceSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     LabeledContent("Type", value: device.kind.title)
-                    LabeledContent("Connection", value: device.source.title)
+                    LabeledContent("Connection", value: device.connectionSummary)
                     LabeledContent("State", value: entity.map { home.bridgeConnected ? $0.displayState : "Last known: \($0.displayState)" } ?? device.state)
                     if !device.model.isEmpty { LabeledContent("Model / entity", value: device.model).textSelection(.enabled) }
                     if let host = device.host { LabeledContent("Address", value: host).textSelection(.enabled) }

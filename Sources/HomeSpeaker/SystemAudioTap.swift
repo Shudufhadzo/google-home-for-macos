@@ -22,6 +22,8 @@ final class SystemAudioTap: @unchecked Sendable {
     private let logger = Logger(subsystem: "za.shudu.homespeaker", category: "AudioCapture")
     private var audioFormat: AVAudioFormat?
     private var reportedSignal = false
+    private var reportedBuffers = false
+    var onSignal: (() -> Void)?
     private let lifecycle = DispatchQueue(label: "HomeSpeaker.AudioLifecycle", qos: .userInitiated)
     private let cancellationLock = NSLock()
     private var cancelled = false
@@ -125,11 +127,19 @@ final class SystemAudioTap: @unchecked Sendable {
         }
         do {
             try check(AudioDeviceCreateIOProcIDWithBlock(&ioProc, aggregateID, queue) { [weak self] _, input, _, _, _ in
-                guard let self, let buffer = AVAudioPCMBuffer(pcmFormat: audioFormat, bufferListNoCopy: input, deallocator: nil) else { return }
+                guard let self else { return }
+                if !self.reportedBuffers {
+                    self.reportedBuffers = true
+                    let buffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
+                    let sizes = buffers.map { "\($0.mNumberChannels)ch:\($0.mDataByteSize)bytes" }.joined(separator: ",")
+                    self.logger.notice("First capture buffers: \(sizes, privacy: .public)")
+                }
+                guard let buffer = AVAudioPCMBuffer(pcmFormat: audioFormat, bufferListNoCopy: input, deallocator: nil) else { return }
                 let pcm = PCMEncoder.encode(buffer)
                 if !self.reportedSignal, pcm.contains(where: { $0 != 0 }) {
                     self.reportedSignal = true
                     self.logger.notice("Receiving non-silent stereo PCM while local playback is muted")
+                    self.onSignal?()
                 }
                 if !pcm.isEmpty { consume(pcm) }
             }, "Starting audio capture callback")

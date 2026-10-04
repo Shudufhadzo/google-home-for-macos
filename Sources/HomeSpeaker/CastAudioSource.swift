@@ -11,7 +11,13 @@ enum CastAudioSource: String, CaseIterable, Identifiable {
         let description: CATapDescription
         switch self {
         case .system:
-            description = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
+            description = CATapDescription(stereoGlobalTapButExcludeProcesses: Self.ownAudioProcesses())
+            if #available(macOS 26.0, *) {
+                // The companion AirPlay player consumes this same stream. Including
+                // our output in the tap would recapture it and create audio feedback.
+                description.bundleIDs = [Bundle.main.bundleIdentifier ?? "za.shudu.homespeaker"]
+                description.isProcessRestoreEnabled = true
+            }
         case .appleMusic:
             if #available(macOS 26.0, *) {
                 description = CATapDescription(stereoMixdownOfProcesses: [])
@@ -47,5 +53,17 @@ enum CastAudioSource: String, CaseIterable, Identifiable {
             guard AudioObjectGetPropertyData(process, &bundleAddress, 0, nil, &bundleSize, &bundleID) == noErr else { return false }
             return bundleID?.takeUnretainedValue() as String? == "com.apple.Music"
         }
+    }
+
+    private static func ownAudioProcesses() -> [AudioObjectID] {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyTranslatePIDToProcessObject,
+                                                mScope: kAudioObjectPropertyScopeGlobal,
+                                                mElement: kAudioObjectPropertyElementMain)
+        var pid = ProcessInfo.processInfo.processIdentifier
+        var process = AudioObjectID(kAudioObjectUnknown)
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        let status = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address,
+                                               UInt32(MemoryLayout<pid_t>.size), &pid, &size, &process)
+        return status == noErr && process != kAudioObjectUnknown ? [process] : []
     }
 }

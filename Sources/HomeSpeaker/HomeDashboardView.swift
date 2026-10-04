@@ -102,7 +102,7 @@ struct HomeDashboardView: View {
             case .network: matchesDestination = device.source != .homeAssistant && device.source != .cast
             default: matchesDestination = true
             }
-            let text = [device.name, device.model, device.kind.title, device.source.title, device.host ?? "", annotation.room].joined(separator: " ")
+            let text = [device.name, device.model, device.kind.title, device.connectionSummary, device.host ?? "", annotation.room].joined(separator: " ")
             return matchesDestination && (search.isEmpty || text.localizedCaseInsensitiveContains(search))
         }
         return ScrollView {
@@ -212,6 +212,9 @@ struct HomeDashboardView: View {
         if device.source == .cast {
             if let cast = speaker.devices.first(where: { "cast:\($0.id)" == device.id }) { speaker.connect(to: cast) }
             destination = .music
+        } else if device.capabilities.contains(.airPlay) {
+            if !speaker.isCastingMacAudio && !speaker.isRestoringAudio { speaker.includeAirPlay = true }
+            destination = .music
         } else if device.kind == .bridge && device.source == .bonjour { sheet = .bridge(device.managementURL) }
         else { sheet = .device(device) }
     }
@@ -309,7 +312,7 @@ private struct HomeDeviceCard: View {
                 Spacer()
                 if busy { ProgressView().controlSize(.mini).accessibilityLabel("Sending command") }
             }
-            Text(device.source.title).font(.caption).foregroundStyle(.secondary)
+            Text(device.connectionSummary).font(.caption).foregroundStyle(.secondary)
             if let entity {
                 let actions = HomeControls.actions(for: entity, services: services)
                 if !actions.isEmpty {
@@ -319,9 +322,9 @@ private struct HomeDeviceCard: View {
                     }.disabled(!connected || busy)
                 } else { Button("Details", action: inspect) }
             } else {
-                if device.source == .cast || device.kind == .bridge {
+                if device.source == .cast || device.kind == .bridge || device.capabilities.contains(.airPlay) {
                     HStack {
-                        Button(device.source == .cast ? "Connect" : "Connect hub", action: select)
+                        Button(device.source == .cast ? "Connect" : device.capabilities.contains(.airPlay) ? "Play via AirPlay" : "Connect hub", action: select)
                         Button("Details", action: inspect)
                     }
                 } else { Button("Details & settings", action: inspect) }

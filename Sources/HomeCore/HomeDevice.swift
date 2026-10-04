@@ -49,7 +49,7 @@ public enum HomeDeviceKind: String, Codable, CaseIterable, Identifiable, Sendabl
     public var isNetworkEquipment: Bool { self == .router || self == .extender }
 }
 
-public enum HomeDeviceSource: String, Codable, Sendable {
+public enum HomeDeviceSource: String, Codable, Hashable, Sendable {
     case cast, homeAssistant, bonjour, ssdp, gateway, manual
     public var title: String {
         switch self {
@@ -59,6 +59,19 @@ public enum HomeDeviceSource: String, Codable, Sendable {
         case .ssdp: return "UPnP"
         case .gateway: return "Mac network route"
         case .manual: return "Saved device"
+        }
+    }
+}
+
+public enum HomeDeviceCapability: String, Hashable, Sendable {
+    case airPlay, googleCast, castGroup, upnp, webManagement
+    public var title: String {
+        switch self {
+        case .airPlay: return "AirPlay"
+        case .googleCast: return "Google Cast"
+        case .castGroup: return "Google Home group"
+        case .upnp: return "UPnP"
+        case .webManagement: return "Web management"
         }
     }
 }
@@ -73,13 +86,36 @@ public struct HomeDevice: Identifiable, Equatable, Sendable {
     public var managementURL: URL?
     public var state: String
     public var controlNote: String
+    /// Every observed service remains an alias for room/favourite assignments.
+    public var discoveryIDs: Set<String>
+    public var sources: Set<HomeDeviceSource>
+    public var capabilities: Set<HomeDeviceCapability>
+    /// Protocol identities, such as a root UPnP UDN or AirPlay device ID. Never an IP address.
+    public var identityKeys: Set<String>
+    /// Addresses observed together during this scan; used only for current reconciliation.
+    public var hostAliases: Set<String>
+
+    public var connectionSummary: String {
+        let titles = [HomeDeviceCapability.googleCast, .castGroup, .airPlay, .upnp, .webManagement]
+            .filter { capabilities.contains($0) }.map(\.title)
+        return titles.isEmpty ? source.title : titles.joined(separator: " · ")
+    }
 
     public init(id: String, name: String, kind: HomeDeviceKind, source: HomeDeviceSource,
                 model: String = "", host: String? = nil, managementURL: URL? = nil,
-                state: String, controlNote: String) {
+                state: String, controlNote: String, discoveryIDs: Set<String> = [],
+                sources: Set<HomeDeviceSource> = [], capabilities: Set<HomeDeviceCapability> = [],
+                identityKeys: Set<String> = [], hostAliases: Set<String> = []) {
         self.id = id; self.name = name; self.kind = kind; self.source = source
         self.model = model; self.host = host; self.managementURL = managementURL
         self.state = state; self.controlNote = controlNote
+        self.discoveryIDs = discoveryIDs.union([id]); self.sources = sources.union([source])
+        self.capabilities = capabilities
+        if source == .cast { self.capabilities.insert(.googleCast) }
+        if source == .ssdp { self.capabilities.insert(.upnp) }
+        if managementURL != nil { self.capabilities.insert(.webManagement) }
+        self.identityKeys = identityKeys
+        self.hostAliases = hostAliases.union(host.map { [$0] } ?? [])
     }
 }
 

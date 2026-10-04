@@ -33,6 +33,7 @@ final class HomeModel {
     @ObservationIgnored private var connectionGeneration = UUID()
     @ObservationIgnored private var connectAttempt = UUID()
     @ObservationIgnored private var started = false
+    @ObservationIgnored private var deviceAliases: [String: Set<String>] = [:]
 
     init(persistence: any HomeSettingsPersisting = HomeSettingsStore(),
          credentials: any HomeCredentialStoring = HomeCredentialStore(),
@@ -42,13 +43,42 @@ final class HomeModel {
         catch { settings = HomeSettings(); errorMessage = "Saved home settings could not be read. \(error.localizedDescription)" }
         discovery.onUpdate = { [weak self] devices, message, interface, scanning in
             guard let self else { return }
-            self.networkDevices = devices; self.networkMessage = message
+            self.acceptNetworkDevices(devices); self.networkMessage = message
             self.networkInterface = interface; self.isScanning = scanning
         }
     }
 
     var rooms: [String] { Set(settings.annotations.values.map(\.room).filter { !$0.isEmpty }).sorted { $0.localizedStandardCompare($1) == .orderedAscending } }
-    func annotation(_ id: String) -> DeviceAnnotation { settings.annotations[id] ?? DeviceAnnotation() }
+    func annotation(_ id: String) -> DeviceAnnotation {
+        let ids = [id] + (deviceAliases[id] ?? []).subtracting([id]).sorted()
+        let annotations = ids.compactMap { settings.annotations[$0] }
+        return DeviceAnnotation(room: annotations.first(where: { !$0.room.isEmpty })?.room ?? "",
+                                isFavorite: annotations.contains(where: \.isFavorite))
+    }
+
+    /// Retain annotation aliases across service expiry and rescan, using protocol IDs only.
+    func acceptNetworkDevices(_ devices: [HomeDevice]) {
+        networkDevices = HomeDeviceReconciler.reconcile(devices)
+        rememberAliases(networkDevices)
+        var changed = false
+        for device in networkDevices {
+            let aliases = deviceAliases[device.id] ?? device.discoveryIDs
+            guard aliases.contains(where: { settings.annotations[$0] != nil }) else { continue }
+            let value = annotation(device.id)
+            for alias in aliases where settings.annotations[alias] != value {
+                settings.annotations[alias] = value; changed = true
+            }
+        }
+        if changed { persist() }
+    }
+
+    private func rememberAliases(_ devices: [HomeDevice]) {
+        for device in devices {
+            var aliases = device.discoveryIDs
+            for alias in device.discoveryIDs { aliases.formUnion(deviceAliases[alias] ?? []) }
+            for alias in aliases { deviceAliases[alias] = aliases }
+        }
+    }
     func entity(for device: HomeDevice) -> HomeEntity? {
         guard let bridge = settings.bridge, device.source == .homeAssistant else { return nil }
         return entities.first { "ha:\(bridge.id.uuidString):\($0.id)" == device.id }
@@ -61,7 +91,8 @@ final class HomeModel {
                 ["TV", "Chromecast", "display", "Nest Hub"].contains { device.model.localizedCaseInsensitiveContains($0) }
             return HomeDevice(id: "cast:\(device.id)", name: device.name, kind: tv ? .television : .speaker, source: .cast,
                               model: device.model, host: device.host, state: "Discovered",
-                              controlNote: "Connect in Music & speakers for playback, volume, and Mac audio casting.")
+                              controlNote: "Connect in Music & speakers for playback, volume, and Mac audio casting.",
+                              capabilities: device.isGroup ? [.castGroup] : [])
         }
         if let bridge = settings.bridge {
             result += entities.map {
@@ -70,6 +101,8 @@ final class HomeModel {
                 return device
             }
         }
+        result = HomeDeviceReconciler.reconcile(result)
+        rememberAliases(result)
         return result.sorted {
             let lhs = annotation($0.id).isFavorite, rhs = annotation($1.id).isFavorite
             if lhs != rhs { return lhs }
@@ -211,7 +244,8 @@ final class HomeModel {
     }
 
     func saveAnnotation(_ id: String, room: String, favorite: Bool) {
-        settings.annotations[id] = DeviceAnnotation(room: String(room.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80)), isFavorite: favorite)
+        let annotation = DeviceAnnotation(room: String(room.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80)), isFavorite: favorite)
+        for alias in deviceAliases[id] ?? [id] { settings.annotations[alias] = annotation }
         persist()
     }
     func toggleFavorite(_ id: String) {

@@ -118,6 +118,7 @@ struct ContentView: View {
             if !model.selectedDevices.isEmpty { destinationControls }
             Button("Google Home group setup") { home.open(URL(string: "https://support.google.com/googlehome/answer/7174267?hl=en")!) }
                 .font(.caption)
+            AirPlayDestinationSection(model: model, devices: home.networkDevices.filter { $0.capabilities.contains(.airPlay) })
         }
     }
 
@@ -183,11 +184,9 @@ struct ContentView: View {
 
     private var otherTVs: [HomeDevice] {
         let castHosts = Set(model.devices.map(\.host))
-        let candidates = home.networkDevices.filter { $0.kind == .television && !($0.host.map(castHosts.contains) ?? false) }
-        // Prefer a TV's AirPlay advertisement to its less specific UPnP record.
-        let ordered = candidates.sorted { $0.id.contains("_airplay.") && !$1.id.contains("_airplay.") }
-        var seen: Set<String> = []
-        return ordered.filter { seen.insert($0.host ?? $0.id).inserted }
+        return home.networkDevices.filter {
+            $0.kind == .television && !$0.capabilities.contains(.airPlay) && !($0.host.map(castHosts.contains) ?? false)
+        }
     }
 
     @ViewBuilder
@@ -200,12 +199,12 @@ struct ContentView: View {
                         Image(systemName: "tv").foregroundStyle(.secondary)
                         VStack(alignment: .leading, spacing: 4) {
                             Text(device.name).font(.subheadline.weight(.semibold))
-                            Text(device.id.contains("_airplay.") ? "AirPlay receiver · outside the Cast session" : "UPnP media device · Cast playback not advertised")
+                            Text("UPnP media device · Cast or AirPlay playback not advertised")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
                 }
-                Text("To play one of these TVs with Google Cast speakers, connect a group-compatible Cast receiver to the TV and add it to a Google Home group. AirPlay and Cast use separate playback systems.")
+                Text("These devices need a compatible playback receiver or home-hub integration.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             .padding(18).frame(maxWidth: .infinity, alignment: .leading)
@@ -321,6 +320,10 @@ struct ContentView: View {
                         if model.isCastingMacAudio {
                             Label(model.audioCaptureStarted ? "Local playback muted" : "Waiting for recording permission…", systemImage: model.audioCaptureStarted ? "speaker.slash.fill" : "hourglass")
                                 .font(.caption).foregroundStyle(.secondary)
+                            if model.audioCaptureStarted {
+                                Label(model.audioSignalDetected ? "Audio signal detected" : "Waiting for an audio signal from the source…", systemImage: model.audioSignalDetected ? "waveform" : "waveform.slash")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
                         }
                     }
                     Spacer(minLength: 0)

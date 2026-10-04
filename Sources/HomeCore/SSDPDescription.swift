@@ -36,12 +36,13 @@ public struct UPnPDescription: Equatable, Sendable {
     public let model: String
     public let deviceType: String
     public let presentationURL: URL?
+    public let rootDeviceID: String?
 
     public var kind: HomeDeviceKind {
         let type = deviceType.lowercased()
         if type.contains("internetgatewaydevice") { return .router }
         if type.contains("wlanaccesspoint") { return .extender }
-        if type.contains("mediarenderer") || type.contains("mediaserver") { return .television }
+        if type.contains("mediarenderer") || type.contains("mediaserver") || type.contains("dialreceiver") { return .television }
         return .other
     }
 
@@ -57,10 +58,12 @@ public struct UPnPDescription: Equatable, Sendable {
            let resolved = URL(string: path, relativeTo: location)?.absoluteURL,
            let safe = try? HomeEndpointPolicy.address(resolved.absoluteString, localOnly: true),
            safe.host?.lowercased() == location.host?.lowercased() { presentation = safe }
+        let rootID = reader.fields["UDN"]?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         return UPnPDescription(name: reader.fields["friendlyName"] ?? "UPnP device",
                               manufacturer: reader.fields["manufacturer"] ?? "",
                               model: reader.fields["modelName"] ?? "",
-                              deviceType: reader.fields["deviceType"] ?? "", presentationURL: presentation)
+                              deviceType: reader.fields["deviceType"] ?? "", presentationURL: presentation,
+                              rootDeviceID: rootID.flatMap { $0.hasPrefix("uuid:") ? "ssdp:\($0)" : nil })
     }
 }
 

@@ -239,4 +239,151 @@ final class CastSessionCoordinatorTests: XCTestCase {
         await report(client, status(content: content, state: "PLAYING"))
         XCTAssertEqual(session.activeContentID, content, "The receiver must be allowed to reach normal advancing playback")
     }
+
+    @MainActor
+    func testCompanionBarrierHoldsASingleSpeakerOrGroupForEitherPreparationOrder() async throws {
+        let group = CastDevice(id: "group", name: "Home group", model: "Google Cast Group", host: "127.0.0.3", port: 32000)
+        for destination in [speaker, group] {
+            for companionFirst in [false, true] {
+                let client = FixtureCastClient()
+                let session = CastSessionCoordinator { _ in client }
+                defer { session.disconnectAll() }
+                session.select(destination); await report(client, status())
+                var prepared = 0, confirmed = 0
+                session.onPrepared = {
+                    XCTAssertTrue(client.playback.isEmpty, "Prepare the companion before sending Cast PLAY")
+                    prepared += 1
+                }
+                session.onPlaybackConfirmed = { confirmed += 1 }
+                XCTAssertTrue(session.playMacAudio(at: stream, metadata: .macAudio, waitForCompanion: true))
+                XCTAssertEqual(client.loads.last?.1, false, "Even a single Cast group must wait for the AirPlay destination")
+                XCTAssertEqual(client.loads.last?.2, 0, "Both protocols must load the shared timeline from its beginning")
+                let content = try XCTUnwrap(session.activeContentID)
+                if companionFirst { session.markCompanionReady(contentID: content) }
+                else { await report(client, status(content: content, state: "PAUSED")) }
+                XCTAssertEqual(prepared, 0); XCTAssertTrue(client.playback.isEmpty)
+                session.setPlaying(true)
+                XCTAssertTrue(client.playback.isEmpty, "A user resume must not bypass the preparation barrier")
+                if companionFirst { await report(client, status(content: content, state: "PAUSED")) }
+                else { session.markCompanionReady(contentID: content) }
+                XCTAssertEqual(prepared, 1); XCTAssertEqual(client.playback, [true]); XCTAssertEqual(confirmed, 0)
+                session.markCompanionReady(contentID: content)
+                await report(client, status(content: content, state: "PLAYING"))
+                XCTAssertEqual(prepared, 1); XCTAssertEqual(client.playback, [true]); XCTAssertEqual(confirmed, 1)
+            }
+        }
+    }
+
+    @MainActor
+    func testCompanionBarrierRequiresEveryCastDestinationAndFreshPlaybackConfirmation() async throws {
+        var clients: [String: FixtureCastClient] = [:]
+        let session = CastSessionCoordinator { device in
+            let client = FixtureCastClient(); clients[device.id] = client; return client
+        }
+        defer { session.disconnectAll() }
+        session.select(speaker); session.select(tv)
+        let a = try XCTUnwrap(clients[speaker.id]), b = try XCTUnwrap(clients[tv.id])
+        await report(a, status()); await report(b, status())
+        var prepared = 0, confirmed = 0
+        session.onPrepared = { prepared += 1 }; session.onPlaybackConfirmed = { confirmed += 1 }
+        session.playMacAudio(at: stream, metadata: .macAudio, waitForCompanion: true)
+        let content = try XCTUnwrap(session.activeContentID)
+        await report(a, status(content: content, state: "PLAYING"))
+        await report(b, status(content: content, state: "PLAYING"))
+        XCTAssertEqual(a.playback, [false]); XCTAssertEqual(b.playback, [false])
+        XCTAssertEqual(prepared, 0); XCTAssertEqual(confirmed, 0, "Early autoplay is held, not accepted as confirmed playback")
+        await report(b, status(content: content, state: "BUFFERING"))
+        session.markCompanionReady(contentID: content)
+        XCTAssertEqual(prepared, 0, "A receiver that resumes buffering is no longer prepared")
+        await report(b, status(content: content, state: "PLAYING"))
+        XCTAssertEqual(prepared, 1); XCTAssertEqual(a.playback, [false, true]); XCTAssertEqual(b.playback, [false, true])
+        XCTAssertEqual(confirmed, 0, "The status that opens the barrier predates PLAY and cannot confirm it")
+        await report(b, status(content: content, state: "PLAYING"))
+        XCTAssertEqual(confirmed, 0, "The other destination also needs a fresh playback report")
+        await report(a, status(content: content, state: "PLAYING"))
+        XCTAssertEqual(confirmed, 1)
+    }
+
+    @MainActor
+    func testCancelledOrStaleCompanionReadinessCannotReleaseANewStream() async throws {
+        let client = FixtureCastClient()
+        let session = CastSessionCoordinator { _ in client }
+        defer { session.disconnectAll() }
+        session.select(speaker); await report(client, status())
+        var prepared = 0
+        session.onPrepared = { prepared += 1 }
+        session.playMacAudio(at: stream, metadata: .macAudio, waitForCompanion: true)
+        let oldContent = try XCTUnwrap(session.activeContentID)
+        session.markCompanionReady(contentID: oldContent)
+        session.cancelMacAudio()
+        session.markCompanionReady(contentID: oldContent)
+        XCTAssertTrue(client.playback.isEmpty); XCTAssertEqual(prepared, 0)
+        let nextStream = stream.appendingPathComponent("next")
+        session.playMacAudio(at: nextStream, metadata: .macAudio, waitForCompanion: true)
+        let nextContent = try XCTUnwrap(session.activeContentID)
+        await report(client, status(content: nextContent, state: "PAUSED"))
+        session.markCompanionReady(contentID: oldContent)
+        XCTAssertTrue(client.playback.isEmpty); XCTAssertEqual(prepared, 0)
+        session.markCompanionReady(contentID: nextContent)
+        XCTAssertEqual(client.playback, [true]); XCTAssertEqual(prepared, 1)
+        session.cancelMacAudio()
+        session.playMacAudio(at: stream, metadata: .macAudio)
+        XCTAssertEqual(client.loads.last?.1, true, "A later Cast-only stream must not inherit a companion barrier")
+        XCTAssertNil(client.loads.last?.2)
+    }
+
+    @MainActor
+    func testAnUnpausableEarlyReceiverFailsInsteadOfPlayingBeforeTheCompanion() async throws {
+        let client = FixtureCastClient()
+        let session = CastSessionCoordinator { _ in client }
+        defer { session.disconnectAll() }
+        session.select(speaker); await report(client, status())
+        var failure: String?, prepared = 0, confirmed = 0
+        session.onFailure = { failure = $0 }; session.onPrepared = { prepared += 1 }
+        session.onPlaybackConfirmed = { confirmed += 1 }
+        session.playMacAudio(at: stream, metadata: .macAudio, waitForCompanion: true)
+        let content = try XCTUnwrap(session.activeContentID)
+        var early = status(content: content, state: "PLAYING"); early.supportsPause = false
+        await report(client, early)
+        XCTAssertNil(session.activeContentID); XCTAssertNotNil(failure); XCTAssertEqual(client.cancellations, 1)
+        session.markCompanionReady(contentID: content)
+        XCTAssertEqual(prepared, 0); XCTAssertEqual(confirmed, 0); XCTAssertTrue(client.playback.isEmpty)
+    }
+
+    @MainActor
+    func testReceiverFailureWhileCompanionLoadsCancelsTheBarrier() async throws {
+        let client = FixtureCastClient()
+        let session = CastSessionCoordinator { _ in client }
+        defer { session.disconnectAll() }
+        session.select(speaker); await report(client, status())
+        var failure: String?, prepared = 0
+        session.onFailure = { failure = $0 }; session.onPrepared = { prepared += 1 }
+        session.playMacAudio(at: stream, metadata: .macAudio, waitForCompanion: true)
+        let content = try XCTUnwrap(session.activeContentID)
+        await report(client, status(content: content, state: "PAUSED"))
+        client.onError?("Receiver could not load the stream")
+        let applied = expectation(description: "Failure callback applied")
+        Task { @MainActor in applied.fulfill() }
+        await fulfillment(of: [applied], timeout: 1)
+        session.markCompanionReady(contentID: content)
+        XCTAssertNil(session.activeContentID); XCTAssertNotNil(failure)
+        XCTAssertEqual(client.cancellations, 1); XCTAssertEqual(prepared, 0); XCTAssertTrue(client.playback.isEmpty)
+    }
+
+    @MainActor
+    func testCancellationFromPreparedCallbackDoesNotStartCastPlayback() async throws {
+        for companionFirst in [false, true] {
+            let client = FixtureCastClient()
+            let session = CastSessionCoordinator { _ in client }
+            defer { session.disconnectAll() }
+            session.select(speaker); await report(client, status())
+            session.onPrepared = { session.cancelMacAudio() }
+            session.playMacAudio(at: stream, metadata: .macAudio, waitForCompanion: true)
+            let content = try XCTUnwrap(session.activeContentID)
+            if companionFirst { session.markCompanionReady(contentID: content) }
+            await report(client, status(content: content, state: "PAUSED"))
+            if !companionFirst { session.markCompanionReady(contentID: content) }
+            XCTAssertNil(session.activeContentID); XCTAssertTrue(client.playback.isEmpty)
+        }
+    }
 }
