@@ -310,7 +310,9 @@ final class CastSessionCoordinator {
             lastSamples = samples
             driftSamples = spread > CastSyncPlanner.tolerance ? driftSamples + 1 : 0
         }
-        guard (force || driftSamples >= 3), canAlign else { return }
+        // The source owns startup and song-gap calibration. A second automatic
+        // Cast loop would fight mixed alignment and cut music during the song.
+        guard force, canAlign else { return }
         for (id, position) in assessment.corrections { connections[id]?.client.seekLiveAudio(to: position) }
         lastCorrection = clock(); driftSamples = 0; canAlign = false
         syncMessage = "Aligning receiver timelines at 1× speed. TV audio processing can add audible delay."

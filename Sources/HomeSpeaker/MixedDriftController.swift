@@ -1,6 +1,6 @@
 import Foundation
 
-/// Seeks only on persistent drift in distinct, fresh reports. Keeps playback at 1×.
+/// Bounded calibration inside a startup/song-gap window, never a continuous servo.
 struct MixedDriftController {
     enum Correction: Equatable { case airPlay(Double), cast(Double) }
     static let tolerance = 0.08
@@ -10,6 +10,8 @@ struct MixedDriftController {
     private var seekLead = 0.0
     private var awaitingResult = false
     private var correctedCast = false
+    private var windowStartedAt: TimeInterval?
+    private var corrections = 0
 
     mutating func reset() { self = Self() }
 
@@ -22,6 +24,8 @@ struct MixedDriftController {
         }
         guard sampleTimes.allSatisfy({ $0.value > (samples[$0.key] ?? -Double.infinity) }) else { return nil }
         samples = sampleTimes
+        if windowStartedAt == nil { windowStartedAt = now }
+        guard corrections < 2, now - (windowStartedAt ?? now) <= 12 else { return nil }
         guard now - lastCorrection >= 4 else { rounds = 0; return nil }
         let error = difference - offset
         // Keep the TV's audio/video pipeline continuous when Cast seeking is
@@ -39,6 +43,7 @@ struct MixedDriftController {
         rounds = abs(error) > Self.tolerance ? rounds + 1 : 0
         guard rounds >= 3 else { return nil }
         rounds = 0; lastCorrection = now; awaitingResult = true
+        corrections += 1
         correctedCast = correctingCast
         return correctingCast ? .cast(target + seekLead) : .airPlay(target + seekLead)
     }
