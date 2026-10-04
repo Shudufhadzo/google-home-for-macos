@@ -13,8 +13,12 @@ final class LiveAudioServer {
     private var requests: [ObjectIdentifier: NWConnection] = [:]
     private var timer: DispatchSourceTimer?
     private var encoder: LiveAudioEncoder?
+    private var tvEncoder: LiveAudioEncoder?
+    private var tvPlaylist: LiveAudioPlaylist?
+    private var audioWritten = false
+    private var tvWritten = false
     private var pendingPCM = Data()
-    private var playlist = LiveAudioPlaylist()
+    private var playlist: LiveAudioPlaylist
     private var stopped = false
     private var announced = false
     private var received = false
@@ -25,22 +29,51 @@ final class LiveAudioServer {
     private let token = UUID().uuidString
     private let sampleRate: Int
     private let buffer: PCMStreamBuffer
+    private let metadata: PlaybackMetadata
+    private let includesTVVideo: Bool
+    private let preferIPv6: Bool
+    private var lastSegmentTime = ProcessInfo.processInfo.systemUptime
 
-    init(sampleRate: Int) {
+    init(sampleRate: Int, coordinatedStartup: Bool = false, metadata: PlaybackMetadata = .macAudio, includeTVVideo: Bool = false, preferIPv6: Bool = false) {
         self.sampleRate = sampleRate
+        self.metadata = metadata
+        includesTVVideo = includeTVVideo
+        self.preferIPv6 = preferIPv6
+        playlist = LiveAudioPlaylist(coordinatedStartup: coordinatedStartup)
+        if includeTVVideo { tvPlaylist = LiveAudioPlaylist(coordinatedStartup: coordinatedStartup) }
         buffer = PCMStreamBuffer(capacity: sampleRate * 4)
     }
 
     func start() throws {
-        let encoder = try LiveAudioEncoder(sampleRate: sampleRate)
+        let encoder = try LiveAudioEncoder(sampleRate: sampleRate, metadata: metadata)
         self.encoder = encoder
         encoder.onSegment = { [weak self] data, duration in
             guard let self else { return }
             self.queue.async {
                 guard !self.stopped else { return }
-                if let duration { self.playlist.append(data, duration: duration) }
+                if let duration {
+                    self.playlist.append(data, duration: duration)
+                    let now = ProcessInfo.processInfo.systemUptime
+                    if now - self.lastSegmentTime > 1.5 {
+                        self.logger.warning("Audio fragment production delayed: \(now - self.lastSegmentTime) s, duration=\(duration)")
+                    }
+                    self.lastSegmentTime = now
+                }
                 else { self.playlist.initialization = data }
                 self.announceIfReady()
+            }
+        }
+        if tvPlaylist != nil {
+            let tv = try LiveAudioEncoder(sampleRate: sampleRate, metadata: metadata, includeVideo: true)
+            tvEncoder = tv
+            tv.onSegment = { [weak self] data, duration in
+                guard let self else { return }
+                self.queue.async {
+                    guard !self.stopped else { return }
+                    if let duration { self.tvPlaylist?.append(data, duration: duration) }
+                    else { self.tvPlaylist?.initialization = data }
+                    self.announceIfReady()
+                }
             }
         }
         let listener = try NWListener(using: .tcp)
@@ -50,7 +83,7 @@ final class LiveAudioServer {
             guard let self, !self.stopped else { return }
             switch state {
             case .ready:
-                guard let address = Self.lanAddress(), let port = listener?.port?.rawValue,
+                guard let address = Self.lanAddress(preferIPv6: self.preferIPv6), let port = listener?.port?.rawValue,
                       let url = URL(string: "http://\(address):\(port)/\(self.token)/live.m3u8") else {
                     self.fail("Could not find this Mac's local network address.")
                     return
@@ -71,13 +104,27 @@ final class LiveAudioServer {
     }
 
     private func announceIfReady() {
-        guard !announced, playlist.isReady, let url else { return }
+        guard !announced, playlist.isReady, tvPlaylist?.isReady != false, let url else { return }
         announced = true
         logger.notice("AAC live stream ready: half-second segments, 256 kbps stereo")
         onReady?(url)
     }
 
     func setArtwork(_ data: Data?) { queue.async { [self] in artwork = data } }
+
+    /// Change the TV card without replacing the writer, playlist, or receiver URL.
+    func updateNowPlaying(_ metadata: PlaybackMetadata) {
+        do {
+            let poster = includesTVVideo ? try NowPlayingPoster.make(metadata: metadata) : nil
+            queue.async { [self] in
+                guard !stopped else { return }
+                artwork = metadata.artwork
+                if let poster { tvEncoder?.updatePoster(poster) }
+            }
+        } catch { logger.error("Could not render the next TV card: \(error.localizedDescription, privacy: .public)") }
+    }
+
+    func finishCoordinatedStartup() { queue.async { [self] in playlist.finishCoordinatedStartup(); tvPlaylist?.finishCoordinatedStartup() } }
 
     func append(_ pcm: Data) {
         guard !buffer.append(pcm) else { return }
@@ -102,8 +149,12 @@ final class LiveAudioServer {
                         silence = true
                     }
                 }
-                guard !pendingPCM.isEmpty, try encoder.append(pendingPCM) else { return }
+                guard !pendingPCM.isEmpty else { return }
+                if !audioWritten { audioWritten = try encoder.append(pendingPCM) }
+                if let tvEncoder, !tvWritten { tvWritten = try tvEncoder.append(pendingPCM) }
+                guard audioWritten, tvEncoder == nil || tvWritten else { return }
                 pendingPCM.removeAll(keepingCapacity: true)
+                audioWritten = false; tvWritten = false
                 if silence { return }
             }
         } catch { fail("Audio encoding failed: \(error.localizedDescription)") }
@@ -120,6 +171,7 @@ final class LiveAudioServer {
         buffer.deactivate()
         timer?.cancel(); timer = nil
         encoder?.stop(); encoder = nil
+        tvEncoder?.stop(); tvEncoder = nil
         for request in requests.values { request.cancel() }
         requests.removeAll()
         listener?.cancel(); listener = nil
@@ -132,7 +184,7 @@ final class LiveAudioServer {
     }
 
     private func accept(_ connection: NWConnection) {
-        guard !stopped, requests.count < 16 else { connection.cancel(); return }
+        guard !stopped, requests.count < 64 else { connection.cancel(); return }
         let id = ObjectIdentifier(connection)
         requests[id] = connection
         connection.stateUpdateHandler = { [weak self, weak connection] state in
@@ -168,17 +220,20 @@ final class LiveAudioServer {
             guard (method == "GET" || method == "HEAD"), path.hasPrefix(prefix) else {
                 self.reply(on: connection, status: "404 Not Found", mime: "text/plain", data: Data()); return
             }
-            let file = String(path.dropFirst(prefix.count))
+            let requestedFile = String(path.dropFirst(prefix.count))
+            let isTV = requestedFile.hasPrefix("tv/")
+            let file = isTV ? String(requestedFile.dropFirst(3)) : requestedFile
+            let selectedPlaylist = isTV ? self.tvPlaylist : self.playlist
             self.logger.debug("HLS request: \(file, privacy: .public)")
             var data: Data?
             var mime = "audio/mp4"
             switch file {
-            case "live.m3u8": data = self.playlist.manifest; mime = "application/vnd.apple.mpegurl"
-            case "init.mp4": data = self.playlist.initialization
+            case "live.m3u8": data = selectedPlaylist?.manifest; mime = "application/vnd.apple.mpegurl"
+            case "init.mp4": data = selectedPlaylist?.initialization
             case "live.m3u8.jpg": data = self.artwork; mime = "image/jpeg"
             default:
                 if file.hasSuffix(".m4s"), let number = Int(file.dropLast(4)),
-                   let segment = self.playlist.segments.first(where: { $0.number == number }) {
+                   let segment = selectedPlaylist?.segments.first(where: { $0.number == number }) {
                     data = segment.data
                     if !self.received, method == "GET" {
                         self.received = true
@@ -186,6 +241,9 @@ final class LiveAudioServer {
                         self.onReceiver?()
                     }
                 }
+            }
+            if data == nil, file.hasSuffix(".m4s") {
+                self.logger.error("Expired or missing HLS fragment \(file, privacy: .public); retained \(self.playlist.segments.first?.number ?? -1)...\(self.playlist.segments.last?.number ?? -1)")
             }
             self.reply(on: connection, status: data == nil ? "404 Not Found" : "200 OK", mime: mime,
                        data: data ?? Data(), head: method == "HEAD")
@@ -197,23 +255,31 @@ final class LiveAudioServer {
         connection.send(content: Data(headers.utf8) + (head ? Data() : data), completion: .contentProcessed { _ in connection.cancel() })
     }
 
-    private static func lanAddress() -> String? {
+    private static func lanAddress(preferIPv6: Bool) -> String? {
         var head: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&head) == 0, let head else { return nil }
         defer { freeifaddrs(head) }
         var addresses: [(String, String)] = []
+        var ipv6Addresses: [(String, String)] = []
         var current: UnsafeMutablePointer<ifaddrs>? = head
         while let item = current {
             let entry = item.pointee
-            if let address = entry.ifa_addr, address.pointee.sa_family == sa_family_t(AF_INET),
+            if let address = entry.ifa_addr,
+               [sa_family_t(AF_INET), sa_family_t(AF_INET6)].contains(address.pointee.sa_family),
                entry.ifa_flags & UInt32(IFF_LOOPBACK) == 0 {
                 var name = [CChar](repeating: 0, count: Int(NI_MAXHOST))
                 if getnameinfo(address, socklen_t(address.pointee.sa_len), &name, socklen_t(name.count), nil, 0, NI_NUMERICHOST) == 0 {
-                    addresses.append((String(cString: entry.ifa_name), String(cString: name)))
+                    let host = String(cString: name), interface = String(cString: entry.ifa_name)
+                    if address.pointee.sa_family == sa_family_t(AF_INET) { addresses.append((interface, host)) }
+                    else if !host.hasPrefix("fe80:"), !host.contains("%"), host != "::1" {
+                        ipv6Addresses.append((interface, "[\(host)]"))
+                    }
                 }
             }
             current = entry.ifa_next
         }
-        return addresses.first(where: { $0.0 == "en0" })?.1 ?? addresses.first?.1
+        let ipv4 = addresses.first(where: { $0.0 == "en0" })?.1 ?? addresses.first?.1
+        let ipv6 = ipv6Addresses.first(where: { $0.0 == "en0" })?.1 ?? ipv6Addresses.first?.1
+        return preferIPv6 ? ipv6 ?? ipv4 : ipv4 ?? ipv6
     }
 }

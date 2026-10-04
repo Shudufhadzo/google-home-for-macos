@@ -1,26 +1,50 @@
-# Google Home for macOS — Home Speaker
+# Home Manager for macOS
 
-![Home Speaker logo](Resources/HomeSpeakerLogo.png)
+![Home Manager logo](Resources/HomeSpeakerLogo.png)
 
-A native, local macOS app for a Xiaomi Mi Smart Speaker (L09G) and other Google Cast audio devices. It discovers receivers on the same Wi-Fi network, connects to one, shows the current media title, and controls play, pause, stop, supported queue skips, and speaker volume. Apple Music casts show the song, artist, album, available artwork, and playback position; the transport buttons control Music on the Mac. It streams captured Mac sound over Wi-Fi to the selected Cast speaker.
+A native macOS home-management app, expanded from **Home Speaker**. Keep Cast devices, home-hub entities, routers, Wi-Fi extenders, and other advertised local devices together. Organize entries into rooms and favourites, control supported Home Assistant entities, and open network devices' management pages in Safari. **Music & speakers** retains Cast playback, volume, Apple Music metadata, and Mac audio streaming.
 
-**An independent native macOS app for Google Cast speakers.** This is not an official Google Home application and is not affiliated with Google, Apple, or Xiaomi.
+This is an independent project, not an official Google Home application. Compatibility depends on a device's protocol, exact model, firmware, and configured integrations; a manufacturer's name or a shared Wi-Fi network does not guarantee control.
 
 [![macOS build and tests](https://github.com/Shudufhadzo/google-home-for-macos/actions/workflows/ci.yml/badge.svg)](https://github.com/Shudufhadzo/google-home-for-macos/actions/workflows/ci.yml)
 
-## Download Home Speaker for macOS
+## Download Home Manager 0.5.5
 
-[**Download Home Speaker 0.4.2 for macOS (.dmg)**](https://github.com/Shudufhadzo/google-home-for-macos/releases/download/v0.4.2/Home-Speaker-0.4.2.dmg)
+[**Download Home Manager 0.5.5 for macOS (.dmg)**](https://github.com/Shudufhadzo/google-home-for-macos/releases/download/v0.5.5/Home-Manager-0.5.5.dmg)
 
-Open the DMG and drag **Home Speaker.app** to **Applications**. The download includes Apple silicon and Intel builds and requires macOS 14.4 or newer.
+Open the DMG and drag **Home Manager.app** to **Applications**. The universal download supports **Apple silicon and Intel** and requires **macOS 14.4 or newer**. It is signed with a Developer ID Application certificate and notarized by Apple.
 
-[Download the ZIP instead](https://github.com/Shudufhadzo/google-home-for-macos/releases/download/v0.4.2/Home-Speaker-0.4.2.zip) · [SHA-256 checksums](https://github.com/Shudufhadzo/google-home-for-macos/releases/download/v0.4.2/SHA256SUMS.txt) · [Release notes](https://github.com/Shudufhadzo/google-home-for-macos/releases/tag/v0.4.2)
+[Download the ZIP instead](https://github.com/Shudufhadzo/google-home-for-macos/releases/download/v0.5.5/Home-Manager-0.5.5.zip) · [SHA-256 checksums](https://github.com/Shudufhadzo/google-home-for-macos/releases/download/v0.5.5/SHA256SUMS.txt) · [Release notes](https://github.com/Shudufhadzo/google-home-for-macos/releases/tag/v0.5.5)
 
-This download is signed with a Developer ID Application certificate and notarized by Apple. The DMG opens a Finder window that shows where to drag the app for installation.
+This is a **preview release** of the expanded app. Mixed Google Cast/AirPlay playback was checked with Home Speakers and a Samsung TV. Device support and continuous sub-100 ms acoustic synchronisation are not guaranteed.
+
+Created by **Shudufhadzo Nemulalate** · [him@shudufhadzo.com](mailto:him@shudufhadzo.com) · [Portfolio: shudufhadzo.com](https://shudufhadzo.com)
+
+The creator details and clickable links are also available inside **Home Manager → About Home Manager**, or **About Home Manager** at the bottom of the sidebar.
+
+## What's included
+
+Home Manager expands the previous speaker app with:
+
+- **Your home, Favourites, and Rooms:** searchable entries with persistent local room/favourite assignments.
+- **Device display names:** open a device’s Details, enter a **Display name**, and Save. Custom names appear on inventory cards, in search, and in Cast destination controls. They stay on this Mac; the advertised device name and macOS AirPlay picker keep their original names. Clear the field or choose **Use device name** to reset it.
+- **Unified discovery:** advertisements from the same TV or router are reconciled into one card, retaining AirPlay, UPnP, management links, and saved room/favourite aliases. Distinct Google Home groups and hub entities remain separate.
+- **Cast + AirPlay:** include an AirPlay TV using the native route picker inside Home Manager. One captured PCM timeline feeds an audio-only Cast stream and a TV stream with audio, cover art, title and artist. A preparation barrier waits for both outputs. Automatic alignment targets a reported gap below 100 ms, with automatic corrections; physical sound timing still depends on receiver buffering and TV processing.
+- **Continuous playback:** Next/Previous keep the Cast and AirPlay media sessions connected, avoiding the speaker connection chime on each song. The TV card updates its cover/title in the same stream. Brief Cast control-connection interruptions recover without reloading the media; short AirPlay route interruptions get a grace period.
+- **Music & speakers:** select up to eight individual Cast receivers together, or one Google Home group. One capture and AAC stream feed every destination, with a coordinated start, individual/master volume, reported timeline monitoring, and capability-gated drift correction.
+- **Network:** Bonjour and IPv4 SSDP discovery, the gateway reported by macOS, and saved management addresses for routers, extenders, and other devices. Saved addresses are labelled as saved; discovery is not treated as proof of device control.
+- **Home Assistant:** authenticated REST connection, live state/service reads, 10-second polling, and capability-aware controls. Tokens use macOS Keychain. A failed refresh retains last-known state and disables commands until connectivity returns.
+- **Connections:** setup and configuration links for Google Home, Home Assistant, Huawei, Xiaomi, and Matter. Links open in Safari.
+
+See [0.5.5 release notes](docs/RELEASE-NOTES-0.5.5.md), [release verification](docs/VERIFICATION-0.5.5.md), [multi-device playback and TV compatibility](docs/MULTI-DEVICE-CASTING.md), [device support and setup](docs/DEVICE-SUPPORT.md), [architecture and extension guide](docs/HOME-ARCHITECTURE.md), and [playback and TV-artwork verification](docs/VERIFICATION-0.5.4.md). The [display-name verification](docs/VERIFICATION-0.5.3.md) records the preceding build. The [0.5.1 playback verification](docs/VERIFICATION-0.5.1.md), [0.5.0 verification](docs/VERIFICATION-0.5.0.md) and [whole-home development notes](docs/RELEASE-NOTES-0.5.0.md) record earlier baselines.
+
+## Earlier speaker-only release
+
+[Home Speaker 0.4.2](https://github.com/Shudufhadzo/google-home-for-macos/releases/tag/v0.4.2) is retained for reference. It does not include the whole-home expansion, multiple Cast destinations, or the mixed Cast/AirPlay TV path.
 
 ## Release status
 
-Version **0.4.2** is an early open-source prerelease under the [MIT license](LICENSE). The app runs on macOS **14.4 or newer**. Universal packages target Apple silicon and Intel; physical speaker testing so far has been on Apple silicon with a Xiaomi Mi Smart Speaker L09G.
+The project is open source under the [MIT license](LICENSE). Home Manager targets macOS **14.4 or newer**. Universal packages target Apple silicon and Intel. The historical Home Speaker physical checks used a Xiaomi Mi Smart Speaker L09G; they do not validate every new device integration.
 
 Build from source using the steps below. `./Scripts/package-release.sh` creates notarized public packages when configured with a Developer ID Application identity and `notarytool` profile; without them, it creates development packages. See [release packaging](docs/RELEASING.md), [privacy](PRIVACY.md), and [attribution](NOTICE.md).
 
@@ -32,30 +56,45 @@ Requires Xcode 26 or newer with the macOS 26 SDK to build; the resulting app tar
 git clone https://github.com/Shudufhadzo/google-home-for-macos.git
 cd google-home-for-macos
 ./Scripts/build-app.sh
-open dist/HomeSpeaker.app
+open dist/HomeManager.app
 ```
 
-To build both Mac architectures, use `UNIVERSAL=1 ./Scripts/build-app.sh`. To install your locally built app, quit any running copy, then copy `dist/HomeSpeaker.app` to Applications as **Home Speaker.app**. For a notarized DMG release, open the DMG and drag **Home Speaker** into **Applications**.
+To build both Mac architectures, use `UNIVERSAL=1 ./Scripts/build-app.sh`. The source executable remains `HomeSpeaker` and the bundle identifier remains `za.shudu.homespeaker` for continuity. The built app is **Home Manager**. A build without `SIGNING_IDENTITY` is ad-hoc signed; the GitHub release download uses the separately verified Developer ID signature and notarization ticket. Quit a running copy before launching a replacement.
 
-If macOS prompts for Local Network access, allow it. Keep your Mac and speaker on the same Wi-Fi/subnet. If no speaker appears, check **System Settings → Privacy & Security → Local Network**, then rescan. The speaker must already be set up in the Google Home phone app.
+If macOS prompts for Local Network access, allow it. Keep local devices on the same reachable LAN/subnet. If no device appears, check **System Settings → Privacy & Security → Local Network**, then refresh. Cast devices must already be set up in the Google Home phone app. Some routers/extenders do not advertise discovery services: use **Add device** with their actual local management address.
+
+## Connect a home hub
+
+1. Set up Home Assistant on a supported host and add the integrations for your devices in **Settings → Devices & services**.
+2. In Home Assistant, open **Profile → Security → Long-lived access tokens** and create a token for Home Manager.
+3. In Home Manager, open **Connections → Connect Home Assistant**. Enter the server's root address, for example `http://homeassistant.local:8123`, and the token. Use the actual advertised port; it can differ between installations. Remote servers require HTTPS.
+4. Choose **Connect**. Entities and their available controls appear in **Your home**. Open an entry for adjustments and room assignments. These assignments stay on this Mac; they do not change Home Assistant's areas.
+5. Use **Connections → Device integrations** for pairing/configuration beyond the controls exposed here. **Disconnect** removes the connection and its Keychain token.
+
+Home Assistant is optional for direct Cast and network-management links, and required for the broader smart-device controls in this version. It is not bundled or silently installed.
+
+## Synthetic development demo
+
+For a repeatable UI/API check without physical devices, run `python3 Scripts/mock-home-hub.py` and connect to `http://127.0.0.1:8129` with token `home-manager-local-demo`. This loopback-only fixture shows explicitly named **Demo** entities; it is not a real Home Assistant server. Test Turn on/Turn off on **Demo desk light**, open it to apply brightness, assign a room, and check **Demo offline bulb** has no active controls. Disconnect afterward and stop the fixture with Ctrl+C. Restarting resets its synthetic state; saved room/favourite assignments remain local preferences.
 
 ## App artwork and installation
 
-The app icon is in `Resources/HomeSpeakerIcon.icns`, with the full-size source in `Resources/HomeSpeakerIconSource.png`. The transparent wordmark is `Resources/HomeSpeakerLogo.png`. The build script embeds both artwork files and sets `CFBundleIconFile` so Finder, Dock, and the app window use the new icon.
+The app icon is in `Resources/HomeSpeakerIcon.icns`, with the full-size source in `Resources/HomeSpeakerIconSource.png`. The transparent wordmark is `Resources/HomeSpeakerLogo.png`. Home Manager currently retains the existing artwork; the source/bundle identifiers preserve continuity.
 
-To regenerate the icon set after changing the source image, run `./Scripts/generate-app-icon.sh`. To regenerate the matching wordmark, run `swift Scripts/generate-logo.swift`. The installation destination is `/Applications/Home Speaker.app`.
+To regenerate the icon set after changing the source image, run `./Scripts/generate-app-icon.sh`. To regenerate the matching wordmark, run `swift Scripts/generate-logo.swift`. The installation destination for the current app is `/Applications/Home Manager.app`.
 
 ## Cast Mac audio over Wi-Fi
 
-1. Select the speaker card and wait for **Connected**.
-2. Choose **Apple Music** to cast only Music, or **All Mac audio** for the entire sound mix. Choose **Cast Mac audio**. Allow macOS System Audio Recording access if prompted. The app uses Apple's Core Audio tap to capture the Mac sound mix, serves an unlisted live AAC/HLS stream from the Mac, and asks the speaker's Cast receiver to play it. Both devices must remain on the same local network.
+1. In **Music & speakers → Destinations**, select the individual Cast speakers/TVs you want and wait for every destination to show **Connected**. Alternatively, select a Google Home group: the group handles its members' synchronisation. Group selection replaces individual selections to avoid conflicting sessions. Stop casting before changing destinations.
+2. Choose **Apple Music** to cast only Music, or **All Mac audio** for the entire sound mix. Choose **Cast Mac audio**. Allow macOS System Audio Recording access if prompted. The app uses Apple's Core Audio tap to capture the Mac sound mix, serves one unlisted live AAC/HLS stream from the Mac, and asks each selected Cast receiver to play the same timeline. All devices must remain on the same local network. For individual receivers, the app prepares them with autoplay disabled, waits for all of them, and starts playback together at normal speed.
 3. Local playback of the selected source is automatically muted using Core Audio's `mutedWhenTapped` mode. Other applications remain audible when you select Apple Music. The Mac's system volume setting is not changed.
-4. When asked, allow **Home Speaker → Music** Automation access for song information and playback controls. Playback state and metadata refresh every 250 ms; artwork refreshes when the track changes. The current song is also published as music metadata to the Cast receiver for Google Home on the phone. Track changes load a fresh media item and stream URL so connected Google Home apps receive a new title together with the artwork. Artwork is served temporarily over the same local connection. If access is denied, casting still works and the app shows how to enable it under **Privacy & Security → Automation**.
-5. Choose **Stop casting** when finished. The app closes the stream and releases the audio tap, restoring local playback. Connection errors, receiver playback changes, and startup timeouts also release capture. Stop in Now Playing ends a Mac audio cast; Play/Pause and track skips control Apple Music. When casting Apple Music, playback changes made directly in Music also send Play/Pause to the receiver. The live stream continues advancing with silence during a pause, so Resume can use a direct Play command without loading a new stream. In All Mac audio mode, pausing Music does not pause other applications on the speaker.
+4. When asked, allow the app's **Music** Automation access for song information and playback controls. Playback state and metadata refresh every 250 ms; artwork refreshes when the track changes. The current song is also published as music metadata to the Cast receiver for Google Home on the phone. One live media session remains connected across track changes. The app and TV card update their title and artwork in place. The standard Cast receiver retains the metadata supplied when the session started; refreshing its Google Home track label would require a new load or a custom receiver. Artwork is served temporarily over the same local connection. If access is denied, casting still works and the app shows how to enable it under **Privacy & Security → Automation**.
+5. Choose **Stop casting** when finished. The app closes every owned live session and releases the audio tap, restoring local playback. An unrecoverable connection error, playback takeover, or startup failure on any selected destination stops the whole Mac cast. Brief control-connection interruptions are retried against the existing media session. Stop in Now Playing ends a Mac audio cast; Play/Pause and track skips control Apple Music once and fan out receiver controls. The live stream advances with silence during a pause. Individual receivers that expose live seeking resume at a common live position; otherwise they receive Play on their existing sessions. In All Mac audio mode, pausing Music does not pause other applications in the sound mix.
 
 Audio setup runs off the UI thread so macOS permission prompts do not freeze the app. Cancelling while permission is pending prevents that session from starting afterward. Replacing the app with a new build can require allowing audio recording again.
 
-When using Next/Previous, the app stops the old Cast stream, discards its queued samples, pauses the new Music track at its beginning, and resumes into a fresh segmented audio timeline. This removes the old song's buffered tail. The new timeline retains a short window while the receiver connects; startup and slow networks can still affect when its first audio is heard. The same preparation is applied when Music changes tracks externally. The speaker can still need a short silent buffering interval; this is not a zero-latency Cast transport.
+Next/Previous commands go to Music once. The capture, AAC encoders, HLS URLs, Cast media session and AirPlay item remain active across song changes. The TV card updates inside the existing video stream. Receiver buffering adds a short delay before a skip is heard; the app does not reconnect each song to discard that buffer. Pause/resume also keeps the media session open.
+
 
 The speaker may take a few seconds to start. The connection adds latency, so it is not suited to video synchronization or games. The stream uses AAC at 256 kbps in half-second fragmented MP4 segments over HLS. Receiver buffering is device-dependent; this does not promise instant startup or zero capture latency. The app does not save captured audio. Music protected by DRM, including some Apple Music subscription playback, may be silent when macOS capture is used; use Bluetooth output in that case. The Cast session reaching **Playing** confirms that the speaker accepted the stream, but audible Apple Music playback still needs a listening check.
 
@@ -63,23 +102,24 @@ The speaker may take a few seconds to start. The connection adds latency, so it 
 
 The interface adapts to the current window size. Smaller windows use one column; wide windows and full screen place speakers and casting controls beside an expanded Now Playing panel. Artwork and the playback panel grow with the available space.
 
-The selected speaker card is the Cast destination. Home Speaker does not change the Mac's default sound output. If you want Bluetooth instead of Cast, pair and select that output through macOS System Settings → Sound.
+Checked destination cards play together. The sliders under each selected destination control its volume; the slider under Now Playing controls all selected volumes. Automatic alignment compares receiver-reported media positions in the background; those positions do not measure acoustic delay. Corrections require fresh timing reports and live-seek support from every receiver. Use a Google Home group for the protocol's own synchronisation and adjust group delay for a TV if needed. AirPlay TVs can join the same audio stream through **Play with AirPlay** on the TV destination card. Choose the TV in Home Manager’s native AirPlay picker after starting capture. Use this Mac as Music’s output; Home Manager supplies the AirPlay output itself. UPnP-only TVs retain their compatibility limits. See the [mixed playback guide](docs/MULTI-DEVICE-CASTING.md#cast-speakers-and-an-airplay-tv). Home Manager does not change the Mac's default sound output. If you want Bluetooth instead of Cast, pair and select that output through macOS System Settings → Sound.
 
 ## Shared playback from other devices
 
-When your phone or another Cast app starts music, connect Home Speaker to the same speaker to see the receiver's title, artist, and available album cover. The artwork loads from the image URL provided by the active Cast session. If the sender provides no image, or the image cannot be fetched, the app shows its music placeholder. Selecting a speaker joins its current session without taking over playback.
+When your phone or another Cast app starts music, connect Home Manager to the same speaker to see the receiver's title, artist, and available album cover. The artwork loads from the image URL provided by the active Cast session. If the sender provides no image, or the image cannot be fetched, the app shows its music placeholder. Selecting a speaker joins its current session without taking over playback.
 
-## Implementation and limits
+## Cast implementation and limits
 
-- Native SwiftUI interface; Bonjour (`_googlecast._tcp`) discovery; a small Cast V2 client over the local network; Core Audio capture; a temporary local HTTP audio stream.
-- Google's Home API samples target iOS and Android. This native macOS app does not manage Google Home account devices or routines. Google's web controls and phone app remain separate, and initial speaker setup still needs the phone app.
+- Native SwiftUI interface; a reusable `HomeCore` library for entity/capability models, endpoint policy, Home Assistant REST, and SSDP description parsing; macOS Bonjour/SSDP discovery and Keychain persistence; existing Cast V2/Core Audio/HLS modules.
+- Google's Home APIs target iOS and Android. This native macOS app opens Google Home and its automations in Safari; it does not directly synchronize Google account devices or commission Matter accessories. Existing Home Assistant integrations provide the broader device-control route.
 - The Cast V2 connection accepts the receiver's self-signed local certificate. It should be used only on a trusted local network.
 - Capture preserves stereo 16-bit PCM at the device sample rate, then Apple's AVAssetWriter encodes AAC at 256 kbps and produces half-second fragmented MP4 segments. No third-party encoder is bundled. Audio segments and playlists remain in memory and are removed when casting stops.
-- The live playlist advertises six recent segments (about three seconds), retaining twenty for in-flight requests. Encoding uses a one-second bounded PCM queue and stops on overload. Pausing an Apple Music cast pauses the receiver directly. HLS keeps advancing with silence when the capture tap supplies no samples, so Resume uses a direct Play command on the existing receiver session. All Mac audio remains a continuous mix, independent of Music's playback state.
-- Regression tests cover stereo channel separation, buffered capture, overload reporting, real HTTP HLS delivery, native AAC decoding, silent startup, continuous live delivery, bounded playlist history, separate artwork, song identity, and cancellation. The app supports one receiver at a time and does not synchronize groups.
+- Single/group playback retains the existing six-segment live window and twenty-segment history. Independent and mixed playback advertise a bounded sixty-four-segment window (about thirty-two seconds) and retain up to 129 segments so recently removed media URLs remain available while receivers prepare or seek. The startup hint switches to the live edge after preparation. Encoding uses a one-second bounded PCM queue and stops on overload. All receivers consume identical encoded segments. All Mac audio remains a continuous mix, independent of Music's playback state.
+- `CastSessionCoordinator` owns receiver connections and the start barrier; `CastSyncPlanner` compares fresh positions at a common time and corrects sustained drift by seeking ahead receivers back to the slowest one, only inside an overlapping live window. It does not change pitch or speed to chase drift. Independent receiver sessions are best effort; receiver timestamps do not include TV/audio-system processing delay. Google Home groups provide receiver-managed synchronisation. AirPlay and UPnP discovery do not create Cast compatibility. See [the multi-device guide](docs/MULTI-DEVICE-CASTING.md).
+- Regression tests cover multiple selections, start/confirmation barriers, stale callbacks, shared HTTP media, drift/timing constraints, bounded buffers, cancellation, native stereo AAC, and the whole-home APIs. The existing physical Cast test remains opt-in and is separate from audible multi-device acceptance.
 - Device listening checks are separate from digital audio tests. A Cast session reporting Playing does not by itself prove audible quality or local speaker muting.
 
-## Validation
+## Historical speaker validation (0.4.x)
 
 Earlier listening checks on the Xiaomi L09G confirmed audible casting, a silent Mac, and clear sound. The user subsequently measured **12–13 seconds of Play/Pause delay in the WAV build**. Version 0.4.0 replaces that transport and adds direct receiver playback synchronization; the previous listening acceptance does not validate this new transport.
 
@@ -89,7 +129,7 @@ Run `swift test --disable-sandbox` to check audio conversion and streaming. The 
 
 ## Contributing and support
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for build and test instructions and [SECURITY.md](SECURITY.md) for private vulnerability reporting. For ordinary bugs, include the speaker model, macOS version, audio source, and reproduction steps in a GitHub issue.
+Contact [him@shudufhadzo.com](mailto:him@shudufhadzo.com), or visit [shudufhadzo.com](https://shudufhadzo.com). See [CONTRIBUTING.md](CONTRIBUTING.md) for build and test instructions and [SECURITY.md](SECURITY.md) for private vulnerability reporting. For ordinary bugs, include the speaker model, macOS version, audio source, and reproduction steps in a GitHub issue.
 
 ## License
 

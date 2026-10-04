@@ -6,8 +6,21 @@ struct LiveAudioPlaylist {
     private(set) var segments: [Segment] = []
     private var nextNumber = 0
     var initialization: Data?
-    let windowCount = 6
-    let retainedCount = 20
+    let windowCount: Int
+    let retainedCount: Int
+    private(set) var isCoordinatingStartup: Bool
+
+    init(coordinatedStartup: Bool = false) {
+        // Independent receivers need time to prepare the same beginning. The
+        // larger window is still bounded, including during paused Music playback.
+        windowCount = coordinatedStartup ? 64 : 6
+        // RFC 8216 §6.2.2: after leaving the manifest, a fragment must remain
+        // downloadable for its duration plus the longest advertised playlist.
+        retainedCount = coordinatedStartup ? 129 : 20
+        isCoordinatingStartup = coordinatedStartup
+    }
+
+    mutating func finishCoordinatedStartup() { isCoordinatingStartup = false }
 
     mutating func append(_ data: Data, duration: Double) {
         segments.append(Segment(number: nextNumber, duration: duration, data: data))
@@ -23,7 +36,7 @@ struct LiveAudioPlaylist {
                      "#EXT-X-MEDIA-SEQUENCE:\(window.first?.number ?? 0)",
                      "#EXT-X-INDEPENDENT-SEGMENTS", "#EXT-X-MAP:URI=\"init.mp4\""]
         // Three half-second segments behind the edge, instead of an unbounded WAV prebuffer.
-        lines.append("#EXT-X-START:TIME-OFFSET=-1.5,PRECISE=YES")
+        lines.append("#EXT-X-START:TIME-OFFSET=\(isCoordinatingStartup ? "0" : "-1.5"),PRECISE=YES")
         for segment in window {
             lines.append(String(format: "#EXTINF:%.6f,", locale: Locale(identifier: "en_US_POSIX"), segment.duration))
             lines.append("\(segment.number).m4s")

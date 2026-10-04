@@ -1,10 +1,10 @@
-"""Finder layout for the Home Speaker drag-to-Applications disk image."""
+"""Finder layout for the Home Manager drag-to-Applications disk image."""
 
 from pathlib import Path
 
 root = Path(defines["project_dir"])
 files = [
-    (defines["app_path"], "Home Speaker.app"),
+    (defines["app_path"], "Home Manager.app"),
     (str(root / "Resources" / "DMGDragArrow.png"), "Drag →.png"),
 ]
 symlinks = {"Applications": "/Applications"}
@@ -24,7 +24,7 @@ text_size = 13
 label_pos = "bottom"
 arrange_by = None
 show_icon_preview = True
-icon_locations = {"Home Speaker.app": (145, 195), "Drag →.png": (340, 195), "Applications": (535, 195)}
+icon_locations = {"Home Manager.app": (145, 195), "Drag →.png": (340, 195), "Applications": (535, 195)}
 # SetFile's extension-hidden flag writes FinderInfo into the app bundle root,
 # which invalidates a stapled Developer ID signature. Finder hides .app by default.
 hide_extensions = ["Drag →.png"]

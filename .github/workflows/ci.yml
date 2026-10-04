@@ -7,11 +7,11 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
-      - name: Test audio and protocol behavior
+      - name: Test audio, home controls, discovery, and connection recovery
         run: swift test --disable-sandbox
       - name: Build universal native app
         run: UNIVERSAL=1 ./Scripts/build-app.sh
       - name: Verify both architectures
         run: |
-          architectures="$(lipo -archs dist/HomeSpeaker.app/Contents/MacOS/HomeSpeaker)"
+          architectures="$(lipo -archs dist/HomeManager.app/Contents/MacOS/HomeSpeaker)"
           [[ "$architectures" == *arm64* && "$architectures" == *x86_64* ]]

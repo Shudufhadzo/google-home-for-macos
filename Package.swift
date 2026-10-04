@@ -4,10 +4,15 @@ import PackageDescription
 let package = Package(
     name: "HomeSpeaker",
     platforms: [.macOS("14.4")],
-    products: [.executable(name: "HomeSpeaker", targets: ["HomeSpeaker"])],
+    products: [
+        .executable(name: "HomeSpeaker", targets: ["HomeSpeaker"]),
+        .library(name: "HomeCore", targets: ["HomeCore"])
+    ],
     targets: [
-        .executableTarget(name: "HomeSpeaker"),
-        .testTarget(name: "HomeSpeakerTests", dependencies: ["HomeSpeaker"])
+        .target(name: "HomeCore"),
+        .executableTarget(name: "HomeSpeaker", dependencies: ["HomeCore"]),
+        .testTarget(name: "HomeSpeakerTests", dependencies: ["HomeSpeaker", "HomeCore"]),
+        .testTarget(name: "HomeCoreTests", dependencies: ["HomeCore"])
     ],
     swiftLanguageVersions: [.v5]
 )

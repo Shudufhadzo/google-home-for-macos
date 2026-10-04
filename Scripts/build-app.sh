@@ -11,7 +11,7 @@ if [[ "${UNIVERSAL:-0}" == 1 ]]; then
 fi
 swift build "${build_args[@]}"
 bin_dir="$(swift build "${build_args[@]}" --show-bin-path)"
-app_dir="$project_dir/dist/HomeSpeaker.app"
+app_dir="$project_dir/dist/HomeManager.app"
 mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
 cp "$bin_dir/HomeSpeaker" "$app_dir/Contents/MacOS/HomeSpeaker"
 cp Resources/Info.plist "$app_dir/Contents/Info.plist"
